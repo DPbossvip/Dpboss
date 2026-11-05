@@ -325,128 +325,118 @@ app.post("/admin/result",adminOnly,(req,res)=>{
 });
 app.post("/admin/result/toggle",adminOnly,(req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),r=m&&m.results.find(x=>x.date===req.body.date);if(r){r.published=!r.published;r.openPublished=r.published;r.closePublished=r.published;r.updatedAt=new Date().toISOString();logAction(s,r.published?"Result published":"Result unpublished",`${m.name} · ${r.date}`);writeStore(s);req.session.flash=r.published?"Result published.":"Result unpublished.";}res.redirect("/admin");});
 
-// MatkaAPI integration: credentials stay server-side in environment variables.
-const MAPI_BASE = "https://www.matkaapi.com/mapi/market_api.php";
+// SattaAPI integration. All credentials are read only from server environment variables.
+const MAPI_URL = process.env.MATKA_API_URL || "https://matkaapi.sattaapi.com/wp-json/satta/v1/results";
 function apiSlug(name) { return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
-async function matkaApi(params) {
-  if (!process.env.MATKA_API_KEY || !process.env.MATKA_API_DOMAIN) throw new Error("MatkaAPI settings are missing. Configure MATKA_API_KEY and MATKA_API_DOMAIN in the server environment.");
-  const url = new URL(MAPI_BASE);
-  for (const [k,v] of Object.entries({...params, domain_key:process.env.MATKA_API_KEY, domain:process.env.MATKA_API_DOMAIN})) url.searchParams.set(k, String(v));
-  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(12000) });
+async function matkaApi() {
+  const { MATKA_API_KEY, MATKA_DOMAIN_KEY, MATKA_API_DOMAIN } = process.env;
+  if (!MATKA_API_KEY || !MATKA_DOMAIN_KEY || !MATKA_API_DOMAIN) {
+    throw new Error("Configure MATKA_API_KEY, MATKA_DOMAIN_KEY and MATKA_API_DOMAIN in Render Environment.");
+  }
+  const response = await fetch(MAPI_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ api_key: MATKA_API_KEY, domain_key: MATKA_DOMAIN_KEY, domain: MATKA_API_DOMAIN }),
+    signal: AbortSignal.timeout(15000)
+  });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.status === false) throw new Error(body.message || `MatkaAPI request failed (${response.status})`);
+  if (!response.ok) throw new Error(`SattaAPI request failed (${response.status})`);
+  if (body?.results?.status !== true || !Array.isArray(body?.results?.data)) {
+    throw new Error(body?.results?.message || body?.message || "SattaAPI returned an unexpected response.");
+  }
   return body;
 }
-function parseApiResult(row, date) {
-  const raw = String(row.result || "").trim();
-  const match = raw.match(/^(\d{3})\s*[-–]\s*\d{2}\s*[-–]\s*(\d{3})$/);
-  if (!match) return null;
-  const openPanna = match[1], closePanna = match[2];
-  const openAnk = pannaAnk(openPanna), closeAnk = pannaAnk(closePanna);
-  return { date, openPanna, openAnk, jodi: openAnk + closeAnk, closePanna, closeAnk, published:true, openPublished:true, closePublished:true, source:"matkaapi", updatedAt:new Date().toISOString() };
+function parseApiResult(row) {
+  const date = String(row.date || "").slice(0, 10);
+  if (!validDate(date) || date > localDateISO()) return null;
+  const openPanna = String(row.open || "").trim();
+  const closePanna = String(row.close || "").trim();
+  const rawJodi = String(row.jodi || "").trim();
+  if (!validPanna(openPanna) || !/^\d{1,2}$/.test(rawJodi)) return null;
+  const jodi = rawJodi.padStart(2, "0");
+  const hasClose = validPanna(closePanna);
+  return {
+    date, openPanna, openAnk: pannaAnk(openPanna), jodi,
+    closePanna: hasClose ? closePanna : "", closeAnk: hasClose ? pannaAnk(closePanna) : "",
+    published: hasClose, openPublished: true, closePublished: hasClose,
+    source: "matkaapi", updatedAt: new Date().toISOString()
+  };
+}
+function toMinutesSafe(value) {
+  const m=String(value||"").match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if(!m)return "";
+  let h=Number(m[1])%12;
+  if((m[3]||"").toUpperCase()==="PM")h+=12;
+  return `${String(h).padStart(2,"0")}:${m[2]}`;
+}
+function syncSattaRows(store, rows) {
+  let addedMarkets=0, saved=0, skipped=0;
+  for (const row of rows) {
+    const name=String(row.name||"").trim(), slug=apiSlug(name);
+    if (!name || !slug) { skipped++; continue; }
+    let market=store.markets.find(m=>m.apiSlug===slug || apiSlug(m.name)===slug);
+    if (!market) {
+      market={id:`api-${slug}`,apiSlug:slug,name,
+        openTime:toMinutesSafe(row.open_time)||"15:00",
+        closeTime:toMinutesSafe(row.close_time)||"18:00",results:[]};
+      store.markets.push(market); addedMarkets++;
+    } else {
+      market.apiSlug=slug;
+      if (toMinutesSafe(row.open_time)) market.openTime=toMinutesSafe(row.open_time);
+      if (toMinutesSafe(row.close_time)) market.closeTime=toMinutesSafe(row.close_time);
+    }
+    const entry=parseApiResult(row);
+    if (!entry) { skipped++; continue; }
+    const idx=market.results.findIndex(r=>r.date===entry.date);
+    if (idx>=0 && market.results[idx].source!=="matkaapi") { skipped++; continue; }
+    if (idx>=0) {
+      const old=market.results[idx];
+      // Do not erase an already received close result if the provider temporarily sends it blank.
+      if (!entry.closePublished && old.closePublished) {
+        entry.closePanna=old.closePanna; entry.closeAnk=old.closeAnk;
+        entry.closePublished=true; entry.published=true;
+      }
+      market.results[idx]={...old,...entry};
+    } else market.results.push(entry);
+    saved++;
+  }
+  return {addedMarkets,saved,skipped};
 }
 app.get("/admin/api", adminOnly, (req,res) => {
-  const configured = Boolean(process.env.MATKA_API_KEY && process.env.MATKA_API_DOMAIN);
-  res.send(page("MatkaAPI Integration", `${flash(req)}<section class="panel"><h2>Market API Integration</h2><p>${configured ? "API credentials are configured on the server." : "API credentials are not configured yet."}</p><p class="muted">Market list and today's results are fetched securely from the server. Existing manual admin editing remains available.</p><form method="post" action="/admin/api/sync"><button>Fetch / Update Market List</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Fetch one market result</h3><form method="post" action="/admin/api/result"><label>Market API slug (example: mainbazar)</label><input name="market" required maxlength="80" placeholder="mainbazar"><button>Fetch Today’s Result</button></form></section>`, true));
+  const configured = Boolean(process.env.MATKA_API_KEY && process.env.MATKA_DOMAIN_KEY && process.env.MATKA_API_DOMAIN);
+  res.send(page("SattaAPI Integration", `${flash(req)}<section class="panel"><h2>Live Result API Integration</h2><p>${configured ? "SattaAPI credentials are configured on the server." : "SattaAPI credentials are not configured yet."}</p><p class="muted">Fetches the provider market list and results securely. Existing manual admin editing remains available. API credentials are never shown here.</p><form method="post" action="/admin/api/sync"><button>Fetch / Update Results Now</button></form></section>`, true));
 });
 app.post("/admin/api/sync", adminOnly, async (req,res) => {
   try {
-    const list = await matkaApi({ market_list: 1 });
-    const rows = Array.isArray(list.data) ? list.data : [];
-    if (!rows.length) throw new Error(list.message || "API returned an empty market list.");
-    const store = readStore(); let imported = 0, updated = 0, skipped = 0;
-    for (const item of rows) {
-      const name = String(item.name || "").trim(); if (!name) { skipped++; continue; }
-      const slug = apiSlug(name);
-      let market = store.markets.find(m => m.apiSlug === slug || apiSlug(m.name) === slug);
-      if (!market) {
-        const toMinutes = value => { const m=String(value||"").match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i); if(!m)return "15:00"; let h=Number(m[1])%12; if((m[3]||"").toUpperCase()==="PM")h+=12; return `${String(h).padStart(2,"0")}:${m[2]}`; };
-        market = { id: `api-${slug}`, apiSlug:slug, name, openTime:toMinutes(item.open_time), closeTime:toMinutes(item.close_time), results:[] };
-        store.markets.push(market); imported++;
-      } else { market.apiSlug=slug; market.name=name; updated++; }
-      if (validTime(toMinutesSafe(item.open_time))) market.openTime=toMinutesSafe(item.open_time);
-      if (validTime(toMinutesSafe(item.close_time))) market.closeTime=toMinutesSafe(item.close_time);
-    }
-    logAction(store,"MatkaAPI sync",`${imported} market(s) added, ${updated} updated, ${skipped} row(s) skipped`);
-    writeStore(store); req.session.flash=`API sync complete: ${imported} market(s) added, ${updated} updated. Check results on the board.`;
+    const body=await matkaApi();
+    const store=readStore();
+    const counts=syncSattaRows(store,body.results.data);
+    logAction(store,"SattaAPI sync",`${counts.saved} result(s) saved; ${counts.addedMarkets} market(s) added; ${counts.skipped} row(s) skipped`);
+    writeStore(store);
+    req.session.flash=`SattaAPI sync complete: ${counts.saved} result(s) saved, ${counts.addedMarkets} market(s) added, ${counts.skipped} row(s) skipped. Subscription expiry: ${body.expiry||"not provided"}.`;
     res.redirect("/admin/api");
-  } catch (e) { req.session.flash=`API sync failed: ${e.message}`; res.redirect("/admin/api"); }
-});
-function toMinutesSafe(value) { const m=String(value||"").match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i); if(!m)return ""; let h=Number(m[1])%12; if((m[3]||"").toUpperCase()==="PM")h+=12; return `${String(h).padStart(2,"0")}:${m[2]}`; }
-
-app.post("/admin/api/result", adminOnly, async (req,res) => {
-  try {
-    const slug=String(req.body.market||"").trim().toLowerCase();
-    if(!/^[a-z0-9_-]{2,80}$/.test(slug)) throw new Error("Enter a valid market API slug.");
-    const body=await matkaApi({market:slug}); const rows=Array.isArray(body.data)?body.data:[];
-    const store=readStore(); let saved=0;
-    for(const row of rows){
-      const date=String(row.date||body.date||localDateISO()); if(!validDate(date)||date>localDateISO()) continue;
-      const entry=parseApiResult(row,date); if(!entry) continue;
-      const name=String(row.name||body.market||slug).trim();
-      let market=store.markets.find(m=>m.apiSlug===slug||apiSlug(m.name)===slug);
-      if(!market){market={id:`api-${slug}`,apiSlug:slug,name,openTime:"15:00",closeTime:"18:00",results:[]};store.markets.push(market);}
-      const idx=market.results.findIndex(r=>r.date===date); if(idx>=0)market.results[idx]=entry;else market.results.push(entry); saved++;
-    }
-    if(!saved) throw new Error("API returned no complete result in Open-Jodi-Close format for today.");
-    logAction(store,"MatkaAPI result imported",`${slug} · ${saved} result(s)`);writeStore(store);
-    req.session.flash=`Imported ${saved} result(s) for ${slug}.`;res.redirect("/admin/api");
-  }catch(e){req.session.flash=`Result fetch failed: ${e.message}`;res.redirect("/admin/api");}
+  } catch(e) {
+    req.session.flash=`SattaAPI sync failed: ${e.message}`;
+    res.redirect("/admin/api");
+  }
 });
 
-// Automatic read-only result refresh. Provider docs specify a 10-second minimum
-// gap for identical requests; poll at 60-second intervals to stay conservative.
+// Automatic read-only result refresh every 60 seconds.
 let apiAutoSyncRunning = false;
 async function autoSyncMarketApi() {
-  if (apiAutoSyncRunning || !process.env.MATKA_API_KEY || !process.env.MATKA_API_DOMAIN) return;
+  if (apiAutoSyncRunning || !process.env.MATKA_API_KEY || !process.env.MATKA_DOMAIN_KEY || !process.env.MATKA_API_DOMAIN) return;
   apiAutoSyncRunning = true;
   try {
-    const list = await matkaApi({ market_list: 1 });
-    const marketRows = Array.isArray(list.data) ? list.data : [];
-    const store = readStore();
-    for (const item of marketRows) {
-      const name = String(item.name || "").trim();
-      if (!name) continue;
-      const slug = apiSlug(name);
-      let market = store.markets.find(m => m.apiSlug === slug || apiSlug(m.name) === slug);
-      if (!market) {
-        market = { id: `api-${slug}`, apiSlug: slug, name,
-          openTime: toMinutesSafe(item.open_time) || "15:00",
-          closeTime: toMinutesSafe(item.close_time) || "18:00", results: [] };
-        store.markets.push(market);
-      } else {
-        market.apiSlug = slug;
-        if (toMinutesSafe(item.open_time)) market.openTime = toMinutesSafe(item.open_time);
-        if (toMinutesSafe(item.close_time)) market.closeTime = toMinutesSafe(item.close_time);
-      }
-    }
-    const all = await matkaApi({ market: "all" });
-    const rows = Array.isArray(all.data) ? all.data : [];
-    let saved = 0;
-    for (const row of rows) {
-      const slug = apiSlug(row.name || row.market || "");
-      const date = String(row.date || all.date || localDateISO());
-      if (!slug || !validDate(date) || date > localDateISO()) continue;
-      const entry = parseApiResult(row, date);
-      if (!entry) continue;
-      let market = store.markets.find(m => m.apiSlug === slug || apiSlug(m.name) === slug);
-      if (!market) {
-        market = { id: `api-${slug}`, apiSlug: slug, name: String(row.name || slug), openTime: "15:00", closeTime: "18:00", results: [] };
-        store.markets.push(market);
-      }
-      const idx = market.results.findIndex(r => r.date === date);
-      // Preserve admin-entered data; only refresh records originally imported from the API.
-      if (idx >= 0 && market.results[idx].source !== "matkaapi") continue;
-      if (idx >= 0) market.results[idx] = entry; else market.results.push(entry);
-      saved++;
-    }
-    logAction(store, "Automatic MatkaAPI refresh", `${saved} API result(s) updated`);
+    const body=await matkaApi();
+    const store=readStore();
+    const counts=syncSattaRows(store,body.results.data);
+    logAction(store,"Automatic SattaAPI refresh",`${counts.saved} result(s) refreshed`);
     writeStore(store);
-    console.log(`MatkaAPI automatic refresh complete: ${saved} result(s)`);
-  } catch (e) {
-    console.error(`MatkaAPI automatic refresh failed: ${e.message}`);
+    console.log(`SattaAPI automatic refresh: ${counts.saved} result(s), ${counts.addedMarkets} market(s) added`);
+  } catch(e) {
+    console.error(`SattaAPI automatic refresh failed: ${e.message}`);
   } finally {
-    apiAutoSyncRunning = false;
+    apiAutoSyncRunning=false;
   }
 }
 
@@ -455,4 +445,4 @@ app.get("/admin/backup",adminOnly,(req,res)=>{res.send(page("Backup & Restore",`
 app.get("/admin/backup/download",adminOnly,(req,res)=>{res.setHeader("Content-Type","application/json");res.setHeader("Content-Disposition",`attachment; filename="dpboss-backup-${new Date().toISOString().slice(0,10)}.json"`);res.send(JSON.stringify(readStore(),null,2));});
 app.post("/admin/backup/restore",adminOnly,upload.single("backup"),(req,res)=>{try{if(!req.file)throw Error("Choose a backup file.");const s=JSON.parse(req.file.buffer.toString("utf8"));if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");for(const m of s.markets){if(!m.id||!m.name||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");for(const r of m.results){if(!validDate(r.date)||!validPanna(r.openPanna)||!validPanna(r.closePanna)||typeof r.published!=="boolean")throw Error("Backup result data is invalid.");}}logAction(s,"Backup restored","Data restored from uploaded JSON backup");writeStore(s);req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");}catch(e){req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}});
 app.use((err,req,res,next)=>{if(err instanceof multer.MulterError){req.session.flash="Upload failed: file must be under 2 MB.";return res.redirect("/admin/backup");}console.error(err);res.status(500).send("Server error. Check the Termux terminal.");});
-app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.MATKA_API_KEY && process.env.MATKA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, 60000); } });
+app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.MATKA_API_KEY && process.env.MATKA_DOMAIN_KEY && process.env.MATKA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, 60000); } });

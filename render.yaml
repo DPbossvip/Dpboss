@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: dp-result-hub
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health.php
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SATTA_API_URL
+        value: https://sattaapi.com/wp-json/satta/v1/results
+      - key: SATTA_API_KEY
+        sync: false
+      - key: SATTA_DOMAIN_KEY
+        sync: false
+      - key: SATTA_DOMAIN
+        sync: false
+      - key: SYNC_TOKEN
+        generateValue: true
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: APP_ENV
+        value: production
+  - type: cron
+    name: dp-result-hub-sync
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    schedule: "*/15 * * * *"
+    dockerCommand: "php /var/www/html/cron/sync.php"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SATTA_API_URL
+        value: https://sattaapi.com/wp-json/satta/v1/results
+      - key: SATTA_API_KEY
+        sync: false
+      - key: SATTA_DOMAIN_KEY
+        sync: false
+      - key: SATTA_DOMAIN
+        sync: false
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata

@@ -17,23 +17,23 @@ pkg update
 pkg install nodejs-lts unzip nano openssl
 termux-setup-storage
 cd ~
-unzip ~/storage/downloads/mahadev-market-updated.zip
-cd ~/mahadev-market-updated
+unzip ~/storage/downloads/dpboss-market-board.zip
+cd ~/dpboss-market-board
 cp .env.example .env
 ```
 Set your credentials without opening nano using this command (it asks for the password invisibly):
 ```sh
-cd ~/mahadev-market-updated
+cd ~/dpboss-market-board
 read -s -p "Admin password (12+ chars): " APASS; echo
 [ ${#APASS} -ge 12 ] || { echo "Password too short"; unset APASS; exit 1; }
-printf "PORT=3002\nSESSION_SECRET=%s\nADMIN_USERNAME=mahadevadmin\nADMIN_PASSWORD=%s\n" "$(openssl rand -hex 32)" "$APASS" > .env
+printf "PORT=3002\nSESSION_SECRET=%s\nADMIN_USERNAME=dpbossadmin\nADMIN_PASSWORD=%s\n" "$(openssl rand -hex 32)" "$APASS" > .env
 chmod 600 .env
 unset APASS
 npm install
 npm start
 ```
 Open `http://127.0.0.1:3002`; admin login is at `http://127.0.0.1:3002/login`.
-Username is `mahadevadmin`; password is the one you entered.
+Username is `dpbossadmin`; password is the one you entered.
 
 ## Important
 This is a local testing starter. It uses Express's default in-memory session store and local JSON data; do not expose it directly to the public internet. Before online hosting, add persistent sessions, HTTPS secure cookies, rate limiting, CSRF protection, backups and production configuration. Keep `.env` and backup files private.
@@ -75,3 +75,34 @@ History is still shown newest-date-first; that ordering is separate from the thr
 
 ### Important data warning
 The app stores results in a JSON file. Render's ordinary filesystem may be ephemeral, so results can be lost on redeploy/restart unless you attach a persistent disk and set `DATA_DIR` to its mount path (for example `/var/data`, if that is the disk mount path configured in Render). Back up results before deployment. Sessions use the default in-memory store, so admin sessions end when the service restarts; for higher reliability, use a persistent session store before production use.
+
+
+## v2.4 Jodi chart date layout\n- Added a readable Date column to the Jodi chart with a weekly date range.\n- Jodi table uses a fixed minimum width and horizontal scrolling on narrow phones so date labels do not wrap into many lines.\n\n## v2.0 five-year sample chart
+- Added a public 5-Year Sample Chart page for 2022–2026 with a year selector and phone-friendly monthly grid.
+- Values are deterministic synthetic sample numbers, clearly labelled as sample-only; they are not actual historical results.
+- Existing market results, admin routes, and saved data structures are unchanged.
+
+## DPBOSS-style redesign notes
+- Rebranded the interface as DPBOSS with a responsive orange/cream/navy market-board layout.
+- Public navigation includes Home, Jodi Chart, Panel Chart and History.
+- Jodi and Panel charts use only saved, published results; the synthetic five-year sample chart has been removed.
+- Configure API credentials only in Render Environment or a private local `.env`; never commit trial keys.
+- This is an independent implementation inspired by common market-result board layouts, not DPBOSS proprietary source code or assets.
+
+## SattaAPI live result integration
+
+The project uses only the SattaAPI endpoint supplied in the PHP integration kit:
+
+`https://matkaapi.sattaapi.com/wp-json/satta/v1/results`
+
+Configure these private environment variables in Render (do not commit real credentials):
+
+- `SATTA_API_URL` = the endpoint above
+- `SATTA_API_KEY` = your active API key
+- `SATTA_DOMAIN_KEY` = your active domain key
+- `SATTA_API_DOMAIN` = `dpboss-54z9.onrender.com`
+- `SATTA_API_REFRESH_MS` = refresh interval in milliseconds (default 300000 / 5 minutes; minimum 60000)
+
+The server sends a JSON POST body with `api_key`, `domain_key`, and `domain`, matching the PHP kit. It reads results from `results.data`. Admins can run an immediate sync from Admin → API Sync. Automatic sync starts only when all three credentials are configured. Existing admin-entered results are protected; an API refresh will not overwrite them. An already saved close result is retained if the provider temporarily returns an empty close value. Existing market names and configured timings are preserved.
+
+Never commit real API credentials to GitHub. Rotate credentials that have been shared in chat or public locations.

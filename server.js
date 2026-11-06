@@ -581,7 +581,7 @@ app.get("/", (req,res) => {
   const bottom = '<div class="bottom-nav"><a href="/">HOME</a><button type="button" onclick="location.reload()">REFRESH</button></div>';
   const playMatkaButton = playMatkaHref
     ? '<a class="play-matka-float" href="' + esc(playMatkaHref) + '" target="_blank" rel="noopener" aria-label="Play Matka on WhatsApp"><span class="play-icon">💬</span> PLAY MATKA</a>'
-    : '<button class="play-matka-float" type="button" onclick="alert(\'Admin me Personal WhatsApp Link save karein\')"><span class="play-icon">💬</span> PLAY MATKA</button>';
+    : '<button class="play-matka-float" type="button" disabled aria-label="Play Matka on WhatsApp"><span class="play-icon">💬</span> PLAY MATKA</button>';
   res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + playMatkaButton + script));
 });
 
@@ -743,7 +743,7 @@ app.post("/admin/settings/whatsapp",adminOnly,async(req,res)=>{
     const phone=u.hostname==="wa.me"
       ? u.pathname.replace(/^\/+/, "")
       : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : "");
-    valid=u.protocol==="https:" && /^\\d{8,15}$/.test(phone);
+    valid=u.protocol==="https:" && /^\d{8,15}$/.test(phone);
   } catch {}
   if(!valid) return res.status(400).send(page("Invalid WhatsApp Link",'<section class="panel"><h2>Invalid WhatsApp Link</h2><p>Please enter a valid HTTPS personal WhatsApp link, such as https://wa.me/919876543210</p><a href="/admin">Back to Dashboard</a></section>',true));
   const store=readStore();

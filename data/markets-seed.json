@@ -1,0 +1,686 @@
+[
+  {
+    "id": "mahadev",
+    "name": "Mahadev",
+    "openTime": "15:00",
+    "closeTime": "18:00"
+  },
+  {
+    "id": "mahadev-night",
+    "name": "Mahadev Night",
+    "openTime": "19:00",
+    "closeTime": "22:00"
+  },
+  {
+    "id": "market-1",
+    "name": "Kalyan",
+    "openTime": "16:55",
+    "closeTime": "18:55",
+    "apiSlug": "kalyan"
+  },
+  {
+    "id": "api-kalyanmorning",
+    "name": "KALYAN MORNING",
+    "openTime": "11:40",
+    "closeTime": "12:40",
+    "apiSlug": "kalyanmorning"
+  },
+  {
+    "id": "api-milanmorning",
+    "name": "MILAN MORNING",
+    "openTime": "10:30",
+    "closeTime": "11:30",
+    "apiSlug": "milanmorning"
+  },
+  {
+    "id": "api-sridevi",
+    "name": "SRIDEVI",
+    "openTime": "11:35",
+    "closeTime": "12:35",
+    "apiSlug": "sridevi"
+  },
+  {
+    "id": "api-mainbazarmorning",
+    "name": "MAIN BAZAR MORNING",
+    "openTime": "11:15",
+    "closeTime": "12:15",
+    "apiSlug": "mainbazarmorning"
+  },
+  {
+    "id": "api-madhuri",
+    "name": "MADHURI",
+    "openTime": "11:45",
+    "closeTime": "12:45",
+    "apiSlug": "madhuri"
+  },
+  {
+    "id": "api-sridevimorning",
+    "name": "SRIDEVI MORNING",
+    "openTime": "10:10",
+    "closeTime": "11:10",
+    "apiSlug": "sridevimorning"
+  },
+  {
+    "id": "api-maharani",
+    "name": "MAHARANI",
+    "openTime": "12:15",
+    "closeTime": "14:15",
+    "apiSlug": "maharani"
+  },
+  {
+    "id": "api-karnatakaday",
+    "name": "KARNATAKA DAY",
+    "openTime": "10:00",
+    "closeTime": "11:00",
+    "apiSlug": "karnatakaday"
+  },
+  {
+    "id": "api-timebazarmorning",
+    "name": "TIME BAZAR MORNING",
+    "openTime": "11:10",
+    "closeTime": "12:10",
+    "apiSlug": "timebazarmorning"
+  },
+  {
+    "id": "api-mainsrideviday",
+    "name": "MAIN SRIDEVI DAY",
+    "openTime": "13:05",
+    "closeTime": "14:05",
+    "apiSlug": "mainsrideviday"
+  },
+  {
+    "id": "api-timebazar",
+    "name": "TIME BAZAR",
+    "openTime": "13:20",
+    "closeTime": "14:20",
+    "apiSlug": "timebazar"
+  },
+  {
+    "id": "api-taramumbaiday",
+    "name": "TARA MUMBAI DAY",
+    "openTime": "13:35",
+    "closeTime": "13:35",
+    "apiSlug": "taramumbaiday"
+  },
+  {
+    "id": "api-prabhat",
+    "name": "PRABHAT",
+    "openTime": "13:25",
+    "closeTime": "15:05",
+    "apiSlug": "prabhat"
+  },
+  {
+    "id": "api-diamond",
+    "name": "DIAMOND",
+    "openTime": "13:30",
+    "closeTime": "13:30",
+    "apiSlug": "diamond"
+  },
+  {
+    "id": "api-timebazarday",
+    "name": "TIME BAZAR DAY",
+    "openTime": "14:45",
+    "closeTime": "16:45",
+    "apiSlug": "timebazarday"
+  },
+  {
+    "id": "api-milanday",
+    "name": "MILAN DAY",
+    "openTime": "15:25",
+    "closeTime": "17:25",
+    "apiSlug": "milanday"
+  },
+  {
+    "id": "api-mainbazarday",
+    "name": "MAIN BAZAR DAY",
+    "openTime": "15:35",
+    "closeTime": "17:35",
+    "apiSlug": "mainbazarday"
+  },
+  {
+    "id": "api-punabazar",
+    "name": "PUNA BAZAR",
+    "openTime": "13:30",
+    "closeTime": "15:30",
+    "apiSlug": "punabazar"
+  },
+  {
+    "id": "api-newtimebazar",
+    "name": "NEW TIME BAZAR",
+    "openTime": "13:00",
+    "closeTime": "14:00",
+    "apiSlug": "newtimebazar"
+  },
+  {
+    "id": "api-sridevinight",
+    "name": "SRIDEVI NIGHT",
+    "openTime": "19:15",
+    "closeTime": "20:15",
+    "apiSlug": "sridevinight"
+  },
+  {
+    "id": "api-diamondnight",
+    "name": "DIAMOND NIGHT",
+    "openTime": "20:00",
+    "closeTime": "21:00",
+    "apiSlug": "diamondnight"
+  },
+  {
+    "id": "api-madhurinight",
+    "name": "MADHURI NIGHT",
+    "openTime": "18:45",
+    "closeTime": "19:45",
+    "apiSlug": "madhurinight"
+  },
+  {
+    "id": "api-nighttimebazar",
+    "name": "NIGHT TIME BAZAR",
+    "openTime": "20:57",
+    "closeTime": "22:57",
+    "apiSlug": "nighttimebazar"
+  },
+  {
+    "id": "api-taramumbainight",
+    "name": "TARA MUMBAI NIGHT",
+    "openTime": "20:30",
+    "closeTime": "22:30",
+    "apiSlug": "taramumbainight"
+  },
+  {
+    "id": "api-milannight",
+    "name": "MILAN NIGHT",
+    "openTime": "21:20",
+    "closeTime": "23:20",
+    "apiSlug": "milannight"
+  },
+  {
+    "id": "api-rajdhaninight",
+    "name": "RAJDHANI NIGHT",
+    "openTime": "21:20",
+    "closeTime": "23:20",
+    "apiSlug": "rajdhaninight"
+  },
+  {
+    "id": "api-mainbazar",
+    "name": "MAIN BAZAR",
+    "openTime": "22:00",
+    "closeTime": "00:10",
+    "apiSlug": "mainbazar"
+  },
+  {
+    "id": "api-mainsridevi",
+    "name": "MAIN SRIDEVI",
+    "openTime": "11:45",
+    "closeTime": "12:45",
+    "apiSlug": "mainsridevi"
+  },
+  {
+    "id": "api-maharaniday",
+    "name": "MAHARANI DAY",
+    "openTime": "17:15",
+    "closeTime": "19:15",
+    "apiSlug": "maharaniday"
+  },
+  {
+    "id": "api-parelday",
+    "name": "PAREL DAY",
+    "openTime": "14:00",
+    "closeTime": "16:00",
+    "apiSlug": "parelday"
+  },
+  {
+    "id": "api-bombayday",
+    "name": "BOMBAY DAY",
+    "openTime": "13:50",
+    "closeTime": "14:50",
+    "apiSlug": "bombayday"
+  },
+  {
+    "id": "api-kalyannight",
+    "name": "KALYAN NIGHT",
+    "openTime": "21:45",
+    "closeTime": "23:45",
+    "apiSlug": "kalyannight"
+  },
+  {
+    "id": "api-srideviday",
+    "name": "SRIDEVI DAY",
+    "openTime": "13:35",
+    "closeTime": "14:35",
+    "apiSlug": "srideviday"
+  },
+  {
+    "id": "api-prabhatnight",
+    "name": "PRABHAT NIGHT",
+    "openTime": "20:20",
+    "closeTime": "22:20",
+    "apiSlug": "prabhatnight"
+  },
+  {
+    "id": "api-oldmainmumbai",
+    "name": "OLD MAIN MUMBAI",
+    "openTime": "21:35",
+    "closeTime": "23:35",
+    "apiSlug": "oldmainmumbai"
+  },
+  {
+    "id": "api-madhurmorning",
+    "name": "MADHUR MORNING",
+    "openTime": "11:30",
+    "closeTime": "12:30",
+    "apiSlug": "madhurmorning"
+  },
+  {
+    "id": "api-madhurday",
+    "name": "MADHUR DAY",
+    "openTime": "13:30",
+    "closeTime": "14:30",
+    "apiSlug": "madhurday"
+  },
+  {
+    "id": "api-madhurnight",
+    "name": "MADHUR NIGHT",
+    "openTime": "20:30",
+    "closeTime": "22:30",
+    "apiSlug": "madhurnight"
+  },
+  {
+    "id": "api-shriday",
+    "name": "SHRI DAY",
+    "openTime": "11:15",
+    "closeTime": "12:15",
+    "apiSlug": "shriday"
+  },
+  {
+    "id": "api-shrinight",
+    "name": "SHRI NIGHT",
+    "openTime": "20:25",
+    "closeTime": "22:25",
+    "apiSlug": "shrinight"
+  },
+  {
+    "id": "api-ratankhatri",
+    "name": "RATAN KHATRI",
+    "openTime": "21:40",
+    "closeTime": "23:40",
+    "apiSlug": "ratankhatri"
+  },
+  {
+    "id": "api-worlimorning",
+    "name": "WORLI MORNING",
+    "openTime": "12:05",
+    "closeTime": "13:05",
+    "apiSlug": "worlimorning"
+  },
+  {
+    "id": "api-worlinight",
+    "name": "WORLI NIGHT",
+    "openTime": "20:05",
+    "closeTime": "21:05",
+    "apiSlug": "worlinight"
+  },
+  {
+    "id": "api-maharaninight",
+    "name": "MAHARANI NIGHT",
+    "openTime": "22:15",
+    "closeTime": "00:15",
+    "apiSlug": "maharaninight"
+  },
+  {
+    "id": "api-jayshreeday",
+    "name": "JAY SHREE DAY",
+    "openTime": "11:21",
+    "closeTime": "12:21",
+    "apiSlug": "jayshreeday"
+  },
+  {
+    "id": "api-sridhanalaxmi",
+    "name": "SRI DHANALAXMI",
+    "openTime": "12:00",
+    "closeTime": "13:00",
+    "apiSlug": "sridhanalaxmi"
+  },
+  {
+    "id": "api-bombaynight",
+    "name": "BOMBAY NIGHT",
+    "openTime": "21:35",
+    "closeTime": "00:05",
+    "apiSlug": "bombaynight"
+  },
+  {
+    "id": "api-sundaybazar",
+    "name": "SUNDAY BAZAR",
+    "openTime": "12:30",
+    "closeTime": "14:45",
+    "apiSlug": "sundaybazar"
+  },
+  {
+    "id": "api-padmavathi",
+    "name": "PADMAVATHI",
+    "openTime": "11:40",
+    "closeTime": "12:40",
+    "apiSlug": "padmavathi"
+  },
+  {
+    "id": "api-padmavathinight",
+    "name": "PADMAVATHI NIGHT",
+    "openTime": "19:45",
+    "closeTime": "20:45",
+    "apiSlug": "padmavathinight"
+  },
+  {
+    "id": "api-luckyday",
+    "name": "LUCKY DAY",
+    "openTime": "12:45",
+    "closeTime": "14:05",
+    "apiSlug": "luckyday"
+  },
+  {
+    "id": "api-centralmumbai",
+    "name": "CENTRAL MUMBAI",
+    "openTime": "14:00",
+    "closeTime": "15:00",
+    "apiSlug": "centralmumbai"
+  },
+  {
+    "id": "api-mumbaiday",
+    "name": "MUMBAI DAY",
+    "openTime": "14:05",
+    "closeTime": "15:05",
+    "apiSlug": "mumbaiday"
+  },
+  {
+    "id": "api-startaramorning",
+    "name": "STAR TARA MORNING",
+    "openTime": "10:10",
+    "closeTime": "11:10",
+    "apiSlug": "startaramorning"
+  },
+  {
+    "id": "api-startaraday",
+    "name": "STAR TARA DAY",
+    "openTime": "14:20",
+    "closeTime": "15:20",
+    "apiSlug": "startaraday"
+  },
+  {
+    "id": "api-startaranight",
+    "name": "STAR TARA NIGHT",
+    "openTime": "19:20",
+    "closeTime": "20:20",
+    "apiSlug": "startaranight"
+  },
+  {
+    "id": "api-punanightmain",
+    "name": "PUNA NIGHT [ MAIN ]",
+    "openTime": "23:00",
+    "closeTime": "01:50",
+    "apiSlug": "punanightmain"
+  },
+  {
+    "id": "api-supremeday",
+    "name": "SUPREME DAY",
+    "openTime": "15:35",
+    "closeTime": "17:35",
+    "apiSlug": "supremeday"
+  },
+  {
+    "id": "api-supremenight",
+    "name": "SUPREME NIGHT",
+    "openTime": "20:45",
+    "closeTime": "22:45",
+    "apiSlug": "supremenight"
+  },
+  {
+    "id": "api-sitamorning",
+    "name": "SITA MORNING",
+    "openTime": "09:45",
+    "closeTime": "10:45",
+    "apiSlug": "sitamorning"
+  },
+  {
+    "id": "api-srilakshmi",
+    "name": "SRILAKSHMI",
+    "openTime": "11:20",
+    "closeTime": "12:20",
+    "apiSlug": "srilakshmi"
+  },
+  {
+    "id": "api-ashabazar",
+    "name": "ASHA BAZAR",
+    "openTime": "01:30",
+    "closeTime": "14:30",
+    "apiSlug": "ashabazar"
+  },
+  {
+    "id": "api-worlimumbaiday",
+    "name": "WORLI MUMBAI DAY",
+    "openTime": "13:30",
+    "closeTime": "14:30",
+    "apiSlug": "worlimumbaiday"
+  },
+  {
+    "id": "api-mainmumbairk",
+    "name": "MAIN MUMBAI RK",
+    "openTime": "21:30",
+    "closeTime": "23:50",
+    "apiSlug": "mainmumbairk"
+  },
+  {
+    "id": "api-worlimumbai",
+    "name": "WORLI MUMBAI",
+    "openTime": "21:15",
+    "closeTime": "23:10",
+    "apiSlug": "worlimumbai"
+  },
+  {
+    "id": "api-sitaday",
+    "name": "SITA DAY",
+    "openTime": "13:45",
+    "closeTime": "14:45",
+    "apiSlug": "sitaday"
+  },
+  {
+    "id": "api-countrybazar",
+    "name": "COUNTRY BAZAR",
+    "openTime": "13:20",
+    "closeTime": "14:20",
+    "apiSlug": "countrybazar"
+  },
+  {
+    "id": "api-rosebazarday",
+    "name": "ROSE BAZAR DAY",
+    "openTime": "14:30",
+    "closeTime": "15:50",
+    "apiSlug": "rosebazarday"
+  },
+  {
+    "id": "api-rosebazarnight",
+    "name": "ROSE BAZAR NIGHT",
+    "openTime": "22:00",
+    "closeTime": "00:02",
+    "apiSlug": "rosebazarnight"
+  },
+  {
+    "id": "api-jantamorning",
+    "name": "JANTA MORNING",
+    "openTime": "13:00",
+    "closeTime": "14:00",
+    "apiSlug": "jantamorning"
+  },
+  {
+    "id": "api-centralbombay",
+    "name": "CENTRAL BOMBAY",
+    "openTime": "15:15",
+    "closeTime": "16:15",
+    "apiSlug": "centralbombay"
+  },
+  {
+    "id": "api-teenpatti",
+    "name": "TEEN PATTI",
+    "openTime": "19:55",
+    "closeTime": "20:55",
+    "apiSlug": "teenpatti"
+  },
+  {
+    "id": "api-durganight",
+    "name": "DURGA NIGHT",
+    "openTime": "22:30",
+    "closeTime": "00:30",
+    "apiSlug": "durganight"
+  },
+  {
+    "id": "api-mahadevi",
+    "name": "MAHADEVI",
+    "openTime": "16:30",
+    "closeTime": "18:30",
+    "apiSlug": "mahadevi"
+  },
+  {
+    "id": "api-supertime",
+    "name": "SUPER TIME",
+    "openTime": "12:55",
+    "closeTime": "13:55",
+    "apiSlug": "supertime"
+  },
+  {
+    "id": "api-kaali",
+    "name": "KAALI",
+    "openTime": "23:20",
+    "closeTime": "01:35",
+    "apiSlug": "kaali"
+  },
+  {
+    "id": "api-mainmumbainight",
+    "name": "MAIN MUMBAI NIGHT",
+    "openTime": "21:00",
+    "closeTime": "23:00",
+    "apiSlug": "mainmumbainight"
+  },
+  {
+    "id": "api-sitanight",
+    "name": "SITA NIGHT",
+    "openTime": "18:45",
+    "closeTime": "19:45",
+    "apiSlug": "sitanight"
+  },
+  {
+    "id": "api-kamalmorning",
+    "name": "KAMAL MORNING",
+    "openTime": "12:10",
+    "closeTime": "13:10",
+    "apiSlug": "kamalmorning"
+  },
+  {
+    "id": "api-kamalday",
+    "name": "KAMAL DAY",
+    "openTime": "15:40",
+    "closeTime": "17:40",
+    "apiSlug": "kamalday"
+  },
+  {
+    "id": "api-kamalnight",
+    "name": "KAMAL NIGHT",
+    "openTime": "20:45",
+    "closeTime": "22:45",
+    "apiSlug": "kamalnight"
+  },
+  {
+    "id": "api-andhramorning",
+    "name": "ANDHRA MORNING",
+    "openTime": "10:40",
+    "closeTime": "11:40",
+    "apiSlug": "andhramorning"
+  },
+  {
+    "id": "api-andhraday",
+    "name": "ANDHRA DAY",
+    "openTime": "15:35",
+    "closeTime": "17:35",
+    "apiSlug": "andhraday"
+  },
+  {
+    "id": "api-andhranight",
+    "name": "ANDHRA NIGHT",
+    "openTime": "20:45",
+    "closeTime": "22:45",
+    "apiSlug": "andhranight"
+  },
+  {
+    "id": "api-mahadevimorning",
+    "name": "MAHADEVI MORNING",
+    "openTime": "11:45",
+    "closeTime": "12:45",
+    "apiSlug": "mahadevimorning"
+  },
+  {
+    "id": "api-mahadevinight",
+    "name": "MAHADEVI NIGHT",
+    "openTime": "19:50",
+    "closeTime": "20:50",
+    "apiSlug": "mahadevinight"
+  },
+  {
+    "id": "api-delhibazar",
+    "name": "DELHI BAZAR",
+    "openTime": "20:10",
+    "closeTime": "21:10",
+    "apiSlug": "delhibazar"
+  },
+  {
+    "id": "api-rajdhaniday",
+    "name": "RAJDHANI DAY",
+    "openTime": "15:15",
+    "closeTime": "17:15",
+    "apiSlug": "rajdhaniday"
+  },
+  {
+    "id": "api-milanbazarday",
+    "name": "MILAN BAZAR DAY",
+    "openTime": "13:30",
+    "closeTime": "15:30",
+    "apiSlug": "milanbazarday"
+  },
+  {
+    "id": "api-gamaday",
+    "name": "GAMA DAY",
+    "openTime": "14:20",
+    "closeTime": "15:20",
+    "apiSlug": "gamaday"
+  },
+  {
+    "id": "api-mangalday",
+    "name": "MANGAL DAY",
+    "openTime": "16:05",
+    "closeTime": "17:05",
+    "apiSlug": "mangalday"
+  },
+  {
+    "id": "api-worlimumbainight",
+    "name": "WORLI MUMBAI NIGHT",
+    "openTime": "21:45",
+    "closeTime": "23:45",
+    "apiSlug": "worlimumbainight"
+  },
+  {
+    "id": "api-timenight",
+    "name": "TIME NIGHT",
+    "openTime": "20:15",
+    "closeTime": "22:15",
+    "apiSlug": "timenight"
+  },
+  {
+    "id": "api-bombayrajshreenight",
+    "name": "BOMBAY RAJSHREE NIGHT",
+    "openTime": "19:30",
+    "closeTime": "20:30",
+    "apiSlug": "bombayrajshreenight"
+  },
+  {
+    "id": "api-ratnaday",
+    "name": "RATNA DAY",
+    "openTime": "13:35",
+    "closeTime": "14:35",
+    "apiSlug": "ratnaday"
+  }
+]

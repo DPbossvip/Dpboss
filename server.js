@@ -120,6 +120,16 @@ async function initializeDatabase() {
   await marketCol.createIndex({ name: 1 });
   // Add missing local markets/results without overwriting existing MongoDB records.
   const legacy = readStore();
+  // Include deployable market metadata without shipping local result history.
+  const seedPath = path.join(__dirname, "data", "markets-seed.json");
+  if (fs.existsSync(seedPath)) {
+    const seedMarkets = JSON.parse(fs.readFileSync(seedPath, "utf8"));
+    const merged = new Map(legacy.markets.map(m => [String(m.id), m]));
+    for (const m of seedMarkets) {
+      if (!merged.has(String(m.id))) merged.set(String(m.id), { ...m, results: [] });
+    }
+    legacy.markets = Array.from(merged.values());
+  }
   const existingMarkets = await marketCol.find({}).toArray();
   const byId = new Map(existingMarkets.map(m => [String(m._id), m]));
   const byName = new Map(existingMarkets.map(m => [String(m.name || "").trim().toLowerCase(), m]));

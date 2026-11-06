@@ -28,24 +28,132 @@ if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({
   ], nextId: 1, logs: []
 }, null, 2), { mode: 0o600 });
 
+
+const { MongoClient } = require("mongodb");
+const MONGODB_URI = String(process.env.MONGODB_URI || "").trim();
+let mongoDb = null;
+let mongoWriteQueue = Promise.resolve();
+let cachedStore = null;
+
+function normalizeStore(s) {
+  if (!Array.isArray(s.markets)) s.markets = [];
+  if (!Array.isArray(s.logs)) s.logs = [];
+  if (!Number.isInteger(s.nextId)) s.nextId = 1;
+  s.markets.forEach(m => { if (!Array.isArray(m.results)) m.results = []; });
+  return s;
+}
+
 function readStore() {
+  if (cachedStore) return cachedStore;
   try {
-    const s = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    if (!Array.isArray(s.markets)) s.markets = [];
-    if (!Array.isArray(s.logs)) s.logs = [];
-    if (!Number.isInteger(s.nextId)) s.nextId = 1;
-    s.markets.forEach(m => { if (!Array.isArray(m.results)) m.results = []; });
-    return s;
+    return normalizeStore(JSON.parse(fs.readFileSync(DATA_FILE, "utf8")));
   } catch (err) {
     console.error(`Unable to read ${DATA_FILE}. The existing file has been left untouched.`, err.message);
     throw new Error("The saved data file could not be read. Check data/store.json before making changes; the app will not replace it automatically.");
   }
 }
+
+function persistStoreToMongo(snapshot) {
+  if (!mongoDb) return Promise.resolve();
+  const markets = snapshot.markets.map(m => ({
+    _id: String(m.id),
+    name: m.name,
+    openTime: m.openTime,
+    closeTime: m.closeTime,
+    ...(m.apiSlug ? { apiSlug: m.apiSlug } : {})
+  }));
+  const results = [];
+  for (const m of snapshot.markets) {
+    for (const r of (m.results || [])) {
+      results.push({ _id: `${m.id}::${r.date}`, marketId: String(m.id), ...r });
+    }
+  }
+  const state = { _id: "main", nextId: snapshot.nextId, logs: snapshot.logs || [] };
+
+  const run = async () => {
+    const marketCol = mongoDb.collection("markets");
+    const resultCol = mongoDb.collection("daily_results");
+    const stateCol = mongoDb.collection("app_state");
+    if (markets.length) await marketCol.bulkWrite(markets.map(doc => ({
+      replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true }
+    })), { ordered: true });
+    if (results.length) await resultCol.bulkWrite(results.map(doc => ({
+      replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true }
+    })), { ordered: true });
+    await stateCol.replaceOne({ _id: "main" }, state, { upsert: true });
+    const marketIds = markets.map(x => x._id);
+    const resultIds = results.map(x => x._id);
+    await marketCol.deleteMany({ _id: { $nin: marketIds } });
+    await resultCol.deleteMany({ _id: { $nin: resultIds } });
+  };
+  mongoWriteQueue = mongoWriteQueue.catch(() => {}).then(run);
+  return mongoWriteQueue;
+}
+
 function writeStore(s) {
+  const normalized = normalizeStore(s);
+  cachedStore = normalized;
+  if (mongoDb) {
+    void persistStoreToMongo(JSON.parse(JSON.stringify(normalized))).catch(err => {
+      console.error("MongoDB persistence failed:", err.message);
+    });
+    return;
+  }
   const tmp = DATA_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600 });
+  fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   fs.renameSync(tmp, DATA_FILE);
 }
+
+async function initializeDatabase() {
+  if (!MONGODB_URI) {
+    cachedStore = readStore();
+    console.log("Storage mode: local JSON file (MONGODB_URI not configured).");
+    return;
+  }
+  const client = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
+  await client.connect();
+  mongoDb = client.db(process.env.MONGODB_DATABASE || "dpboss");
+  const marketCol = mongoDb.collection("markets");
+  const resultCol = mongoDb.collection("daily_results");
+  await resultCol.createIndex({ marketId: 1, date: 1 }, { unique: true });
+  await resultCol.createIndex({ date: -1 });
+  await marketCol.createIndex({ name: 1 });
+  const [marketDocs, resultDocs, state] = await Promise.all([
+    marketCol.find({}).toArray(),
+    resultCol.find({}).toArray(),
+    mongoDb.collection("app_state").findOne({ _id: "main" })
+  ]);
+
+  if (marketDocs.length === 0) {
+    // First MongoDB startup: migrate the existing JSON store without deleting it.
+    const legacy = readStore();
+    cachedStore = normalizeStore(legacy);
+    await persistStoreToMongo(JSON.parse(JSON.stringify(cachedStore)));
+    await mongoWriteQueue;
+    console.log(`MongoDB first-run migration complete: ${legacy.markets.length} market(s).`);
+    return;
+  }
+
+  const byMarket = new Map();
+  for (const doc of resultDocs) {
+    const item = { ...doc };
+    delete item._id;
+    delete item.marketId;
+    if (!byMarket.has(String(doc.marketId))) byMarket.set(String(doc.marketId), []);
+    byMarket.get(String(doc.marketId)).push(item);
+  }
+  cachedStore = normalizeStore({
+    markets: marketDocs.map(doc => ({
+      id: String(doc._id), name: doc.name, openTime: doc.openTime,
+      closeTime: doc.closeTime, ...(doc.apiSlug ? { apiSlug: doc.apiSlug } : {}),
+      results: byMarket.get(String(doc._id)) || []
+    })),
+    nextId: Number.isInteger(state?.nextId) ? state.nextId : 1,
+    logs: Array.isArray(state?.logs) ? state.logs : []
+  });
+  console.log(`MongoDB connected: ${marketDocs.length} market(s), ${resultDocs.length} daily result(s).`);
+}
+
 function logAction(s, action, detail) {
   s.logs.unshift({ at: new Date().toISOString(), action, detail });
   s.logs = s.logs.slice(0, 500);
@@ -129,6 +237,127 @@ main{width:100%;min-width:0}
   .market-grid .market{padding-left:52px;padding-right:52px}.market-grid .market-action{font-size:9px;padding:5px 4px}
 }
 
+
+/* Screenshot-matched DPBOSS mobile homepage */
+body{background:#ffc994}
+header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:7px 9px 5px;padding:16px 8px 13px;box-shadow:0 2px 0 #a80e1d}
+.brand{font-family:Georgia,serif;font-size:clamp(34px,9vw,48px);font-weight:900;letter-spacing:-1.5px;color:#111;text-shadow:none}
+.brand:before{content:'Dp';font-family:cursive;font-style:italic;color:#ec078d;font-size:1.18em;margin-right:3px}
+.tag{display:none}
+nav{display:none}
+main{max-width:760px;padding:4px 9px calc(76px + env(safe-area-inset-bottom))}
+.welcome-card,.description-card,.home-lucky,.live-panel,.market-toolbar{border:3px solid #ed1b2f;border-radius:15px;background:#ffd0a1;margin:0 0 7px;box-shadow:0 2px 0 #a80e1d}
+.welcome-card{padding:11px 10px;text-align:center;display:flex;align-items:center;justify-content:center;gap:10px;min-height:86px}
+.welcome-mark{flex:0 0 76px;height:70px;border-radius:4px;background:linear-gradient(145deg,#ffd56e,#f08c4e);display:grid;place-items:center;font-size:35px;border:1px solid #e5a04e}
+.welcome-copy{font-size:clamp(16px,4.5vw,22px);font-weight:900;font-style:italic;line-height:1.2;color:#111}
+.description-card{padding:9px 10px;text-align:center;font-size:clamp(14px,4vw,19px);line-height:1.12;font-weight:800;font-style:italic;color:#111}
+.description-card strong{color:#142d65}
+.home-lucky{padding:7px 7px 9px;text-align:center;border-radius:15px}
+.home-lucky h2{background:#f000a5;color:white;border:3px solid white;border-radius:24px;padding:8px 4px;margin:0 0 5px;font-size:clamp(23px,6vw,31px);font-style:italic;text-shadow:1px 2px 2px #6e174f}
+.home-lucky .section-kicker{display:none}
+.home-date{font-weight:800;color:#162b5a;margin:2px 0 6px}
+.lucky-grid{grid-template-columns:1fr 1fr;gap:0}
+.lucky-column{padding:3px 5px;min-width:0}
+.lucky-column+ .lucky-column{border-left:2px solid #ed1b2f}
+.lucky-label{font-size:clamp(16px,4.5vw,22px);font-weight:900;font-style:italic;color:#17407e}
+.lucky-values{font-size:clamp(22px,6vw,31px);font-weight:900;color:#172e66;letter-spacing:1px;overflow-wrap:anywhere}
+.lucky-values small{display:block;font-size:12px;letter-spacing:0;color:#293d68}
+.live-panel{padding:7px;text-align:center;border-radius:15px;border-left:3px solid #ed1b2f}
+.live-panel>div:first-child{background:#f000a5;color:#fff;border:3px solid white;border-radius:24px;padding:7px;font-size:clamp(21px,6vw,29px);font-weight:900;font-style:italic;letter-spacing:1px}
+.live-dot{background:#ef2635;box-shadow:0 0 0 3px #ffffff70}
+.live-market{font-size:clamp(19px,5vw,25px);font-style:italic;color:#122e69;margin-top:8px}
+.live-result{font-size:clamp(23px,6vw,31px);color:#86165d;margin:2px 0 5px}
+.live-meta{font-weight:700;color:#333}
+.live-panel .home-link{background:#5730a0;border:2px solid white;border-radius:12px;font-size:13px;padding:8px 15px}
+.market-count{display:none}
+.market-toolbar{padding:7px 10px;display:block;text-align:center;margin-bottom:7px}
+.market-toolbar h2{background:#f000a5;color:white;border:3px solid white;border-radius:22px;padding:8px;font-size:clamp(18px,5vw,25px);font-style:italic}
+.market-toolbar p{font-size:12px;color:#333;font-weight:800}
+.market-toolbar input{max-width:100%;border:2px solid #ed1b2f;border-radius:10px;margin:5px 0 0;background:#fff7ed}
+.market-grid{display:grid;grid-template-columns:1fr;gap:0;border:3px solid #ed1b2f;border-radius:14px;overflow:hidden;background:#ffd0a1}
+.market-grid .market{border:0;border-bottom:2px solid #ed1b2f;border-radius:0;background:#ffd0a1;box-shadow:none;margin:0;min-height:100px;padding:10px 64px 8px}
+.market-grid .market:last-child{border-bottom:0}
+.market-grid .market:first-child,.market-grid .market:nth-child(8n){background:#fff500}
+.market-grid .market h2{font-size:clamp(20px,5.4vw,28px);font-style:italic;color:#122d68;text-shadow:1px 2px 2px #ffffff;margin:0 0 2px}
+.market-grid .result-line{font-size:clamp(23px,6vw,31px);color:#74135f;margin:1px 0 3px;letter-spacing:0}
+.market-grid .market-times{font-size:clamp(14px,4vw,19px);color:#111;font-style:italic;gap:22px}
+.market-grid .market-action{background:#58319c;color:#fff;border:1px solid #fff;border-radius:11px;padding:7px 9px;font-size:12px;font-style:italic;box-shadow:none}
+.market-grid .market.highlight{background:#fff500}
+.market-grid .empty-result{font-size:12px;color:#6e2b50;font-weight:700}
+.bottom-nav{left:7px;right:7px;bottom:calc(5px + env(safe-area-inset-bottom));gap:6px}
+.bottom-nav a,.bottom-nav button{background:#073e9c;border:2px solid white;border-radius:9px;padding:9px 6px;font-size:clamp(12px,3.5vw,16px);font-style:italic;box-shadow:0 2px 4px #0003}
+.bottom-nav a:nth-child(2){background:#58319c}
+footer{display:none}
+@media(min-width:640px){main{max-width:760px}.market-grid{grid-template-columns:1fr}.welcome-mark{flex-basis:100px;height:84px}}
+@media(max-width:380px){.market-grid .market{padding-left:53px;padding-right:53px}.market-grid .market-action{font-size:10px;padding:6px 5px}.welcome-mark{flex-basis:62px;height:62px}.description-card{font-size:14px}}
+
+
+/* Jodi chart layout matched to the supplied mobile reference */
+.jodi-page{background:#ffc994;border:0}
+.jodi-page-title{margin:0 -9px 0;background:#354fbd;color:#fff;text-align:center;font-size:clamp(21px,5.6vw,30px);font-weight:900;padding:12px 5px;border-bottom:3px solid #111}
+.jodi-table-wrap{width:calc(100% + 18px);margin:0 -9px;overflow:hidden}
+.jodi-table{width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;background:#ffd0a1}
+.jodi-table th{background:#ffc400;color:#080808;border:2px solid #111;padding:8px 1px;font-size:clamp(13px,3.8vw,20px);font-weight:900;text-transform:none}
+.jodi-table td{background:#ffd0a1;border:2px solid #111;padding:0;text-align:center;height:75px}
+.jodi-table .jodi-cell{display:flex;align-items:center;justify-content:center;min-height:73px;height:100%;padding:4px 0;background:transparent;border:0;color:#080808;text-decoration:none;font-size:clamp(21px,6vw,31px);font-weight:900;line-height:1}
+.jodi-table .jodi-cell.latest{color:#ed1717;background:transparent}
+.jodi-table .blank-day{display:block;color:transparent;font-size:1px}
+.jodi-chart-footer{margin:20px -3px 0;background:#ffd0a1;border:3px solid #123e65;padding:0 5px 8px}
+.jodi-footer-links{display:flex;flex-direction:column;border:2px solid #123e65}
+.jodi-footer-links a{display:block;text-align:center;text-decoration:none;color:#16466f;background:#ffd0a1;border-bottom:2px solid #123e65;padding:9px 3px;font-size:clamp(17px,5.2vw,27px);font-weight:800;line-height:1.2}
+.jodi-footer-links a:last-child{border-bottom:0}
+.jodi-footer-brand{margin:18px -2px 0;background:#fff;text-align:center;border:4px solid #d000c8;padding:5px 3px;color:#0872df;font-size:clamp(30px,8vw,49px);font-weight:900;text-shadow:2px 3px 0 #ffd000;overflow-wrap:anywhere}
+.jodi-footer-copy{background:#fff;text-align:center;color:#e21b16;font-size:clamp(21px,5.8vw,32px);font-weight:900;line-height:1.45;padding:8px 4px;text-shadow:1px 2px 0 #ffd000}
+.jodi-footer-copy small{display:block;font-size:clamp(15px,4.2vw,21px);color:#e21b16}
+.jodi-chart-note{background:#ffd0a1;text-align:center;color:#333;font-size:11px;padding:7px}
+@media(max-width:390px){.jodi-table td{height:64px}.jodi-table .jodi-cell{min-height:62px;font-size:clamp(19px,5.8vw,25px)}.jodi-table th{font-size:12px;padding:7px 0}}
+
+
+/* Panel chart: weekly 3x3 panna grid matching supplied mobile reference */
+.panel-page{background:#ffc994;border:0}
+.panel-page-title{margin:0 -9px;background:#354fbd;color:#fff;text-align:center;
+  font-size:clamp(20px,5.6vw,29px);font-weight:900;padding:12px 4px;
+  border-bottom:3px solid #123e65;line-height:1.15}
+.panel-table-wrap{width:calc(100% + 18px);margin:0 -9px;overflow-x:hidden}
+.panel-reference-table{width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;
+  background:#ffd0a1;border:2px solid #1d7893}
+.panel-reference-table col.date-col{width:17.2%}
+.panel-reference-table col.day-col{width:11.828%}
+.panel-reference-table th{background:#ffc400;color:#080808;border:2px solid #1685a2;
+  padding:5px 1px;text-align:center;font-size:clamp(12px,3.4vw,18px);font-weight:900}
+.panel-reference-table td{background:#ffd0a1;border:2px solid #1685a2;padding:0;text-align:center;
+  height:91px;vertical-align:middle;overflow:hidden}
+.panel-reference-table td.date-range{font-size:clamp(10px,2.7vw,14px);font-weight:800;line-height:1.35;
+  padding:2px 1px;color:#111;white-space:normal}
+.panel-cell{display:grid;grid-template-columns: minmax(7px,1fr) minmax(18px,1.45fr) minmax(7px,1fr);
+  grid-template-rows:repeat(3,1fr);align-items:center;justify-items:center;width:100%;height:100%;
+  min-height:88px;padding:2px 1px;box-sizing:border-box;text-decoration:none;color:#111;line-height:1}
+.panel-cell .left-digit,.panel-cell .right-digit{font-size:clamp(11px,3vw,16px);font-weight:500;align-self:center}
+.panel-cell .middle-jodi{grid-column:2;grid-row:1 / 4;font-size:clamp(17px,4.3vw,24px);font-weight:900;white-space:nowrap}
+.panel-cell .left-digit:nth-child(1){grid-column:1;grid-row:1}
+.panel-cell .left-digit:nth-child(2){grid-column:1;grid-row:2}
+.panel-cell .left-digit:nth-child(3){grid-column:1;grid-row:3}
+.panel-cell .right-digit:nth-last-child(3){grid-column:3;grid-row:1}
+.panel-cell .right-digit:nth-last-child(2){grid-column:3;grid-row:2}
+.panel-cell .right-digit:nth-last-child(1){grid-column:3;grid-row:3}
+.panel-cell.latest{color:#ed1717}
+.panel-cell .missing{color:#ed1717;font-weight:900}
+.panel-reference-table .blank-day{display:block;color:transparent;font-size:1px}
+.panel-chart-footer{margin:20px -3px 0;background:#ffd0a1;border:3px solid #123e65;padding:0 5px 8px}
+.panel-footer-links{display:flex;flex-direction:column;border:2px solid #123e65}
+.panel-footer-links a{display:block;text-align:center;text-decoration:none;color:#16466f;background:#ffd0a1;
+  border-bottom:2px solid #123e65;padding:9px 3px;font-size:clamp(17px,5.2vw,27px);font-weight:800;line-height:1.2}
+.panel-footer-links a:last-child{border-bottom:0}
+.panel-footer-brand{margin:18px -2px 0;background:#fff;text-align:center;border:4px solid #d000c8;
+  padding:5px 3px;color:#0872df;font-size:clamp(30px,8vw,49px);font-weight:900;
+  text-shadow:2px 3px 0 #ffd000;overflow-wrap:anywhere}
+.panel-footer-copy{background:#fff;text-align:center;color:#e21b16;font-size:clamp(21px,5.8vw,32px);
+  font-weight:900;line-height:1.45;padding:8px 4px;text-shadow:1px 2px 0 #ffd000}
+.panel-footer-copy small{display:block;font-size:clamp(15px,4.2vw,21px);color:#e21b16}
+@media(max-width:390px){.panel-reference-table td{height:78px}.panel-cell{min-height:75px}
+ .panel-cell .left-digit,.panel-cell .right-digit{font-size:11px}.panel-cell .middle-jodi{font-size:16px}
+ .panel-reference-table th{font-size:11px}}
+
 </style><script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
@@ -165,17 +394,21 @@ app.get("/", (req,res) => {
   const today = localDateISO();
   const allResults = s.markets.flatMap(m => m.results.filter(r => resultIsVisible(r) && validDate(r.date) && r.date <= today).map(r => ({...r, marketName:m.name, marketId:m.id})));
   const todayResults = allResults.filter(r => r.date === today).sort((a,b) => a.marketName.localeCompare(b.marketName));
-  const latest = allResults.sort((a,b) => b.date.localeCompare(a.date))[0];
+  const latest = [...allResults].sort((a,b) => b.date.localeCompare(a.date))[0];
   const dateLabel = new Intl.DateTimeFormat("en-IN", { timeZone:"Asia/Kolkata", day:"2-digit", month:"long", year:"numeric" }).format(new Date());
-  const finalAnks = todayResults.filter(resultIsComplete).map(r => `<span class="lucky-chip"><b>${esc(chartMarketName(r.marketName))}</b><strong>${esc(pannaAnk(r.openPanna))} · ${esc(pannaAnk(r.closePanna))}</strong></span>`).join("");
-  const lucky = `<section class="home-lucky"><div class="section-kicker">TODAY'S PUBLISHED RESULTS</div><h2>Today Lucky Number</h2><p class="home-date">${esc(dateLabel)}</p>${finalAnks ? `<div class="lucky-grid">${finalAnks}</div>` : `<p class="muted">No complete results have been published for today yet.</p>`}</section>`;
-  const latestBlock = latest ? `<section class="live-panel"><div><span class="live-dot"></span><b> LATEST PUBLISHED RESULT</b></div><div class="live-market">${esc(chartMarketName(latest.marketName))}</div><div class="live-result">${resultIsComplete(latest) ? `${esc(latest.openPanna)} - ${esc(resultJodi(latest))} - ${esc(latest.closePanna)}` : "Partially published"}</div><div class="live-meta">${esc(shortDate(latest.date))} · ${["sattaapi", "matkaapi"].includes(latest.source) ? "API update" : "Admin published"}</div><a class="home-link" href="/history?market=${encodeURIComponent(latest.marketId)}&q=${encodeURIComponent(latest.date)}">VIEW RESULT HISTORY</a></section>` : `<section class="live-panel"><div class="section-kicker">LATEST RESULT</div><h2>Results will appear here</h2><p class="muted">No published result is available yet. Connect the market API or publish a verified result from Admin.</p></section>`;
+  const completeToday = todayResults.filter(resultIsComplete);
+  const openAnks = [...new Set(completeToday.map(r => pannaAnk(r.openPanna)))];
+  const closeAnks = [...new Set(completeToday.map(r => pannaAnk(r.closePanna)))];
+  const lucky = `<section class="home-lucky"><h2>✨ Today Lucky Number ✨</h2><p class="home-date">${esc(dateLabel)} · Published results only</p><div class="lucky-grid"><div class="lucky-column"><div class="lucky-label">Golden Ank</div><div class="lucky-values">${openAnks.length ? esc(openAnks.join(" - ")) : "—"}<small>From today's published open results</small></div></div><div class="lucky-column"><div class="lucky-label">Final Ank</div><div class="lucky-values">${closeAnks.length ? esc(closeAnks.join(" - ")) : "—"}<small>From today's published close results</small></div></div></div></section>`;
+  const latestBlock = latest ? `<section class="live-panel"><div><span class="live-dot"></span> LIVE RESULT</div><div class="live-market">${esc(chartMarketName(latest.marketName))}</div><div class="live-result">${resultIsComplete(latest) ? `${esc(latest.openPanna)} - ${esc(resultJodi(latest))} - ${esc(latest.closePanna)}` : (openIsPublished(latest) ? `${esc(latest.openPanna)} - ${esc(pannaAnk(latest.openPanna))} - …` : `… - … - ${esc(latest.closePanna)}`)}</div><div class="live-meta">${esc(shortDate(latest.date))} · ${["sattaapi", "matkaapi"].includes(latest.source) ? "API update" : "Published result"}</div><a class="home-link" href="/history?market=${encodeURIComponent(latest.marketId)}&q=${encodeURIComponent(latest.date)}">VIEW HISTORY</a></section>` : `<section class="live-panel"><div>LIVE RESULT</div><div class="live-market">Results will appear here</div><div class="live-meta">No published results available yet</div><a class="home-link" href="/history">VIEW HISTORY</a></section>`;
   const board = s.markets.map(m=>marketCard(m)).join("") || '<section class="panel">No markets available. Sign in to Admin and sync the market list.</section>';
-  const search = `<section class="market-toolbar"><div><h2>Market Results</h2><p>Market-wise latest published results and charts</p></div><input id="marketSearch" type="search" placeholder="Search market name..." aria-label="Search market"></section>`;
-  const script = `<script>document.addEventListener('DOMContentLoaded',()=>{const input=document.getElementById('marketSearch');if(input)input.addEventListener('input',()=>{const q=input.value.toLowerCase();document.querySelectorAll('.market').forEach(card=>{card.style.display=card.innerText.toLowerCase().includes(q)?'':'none';});});});</script>`;
-  const intro = `<section class="home-hero"><div class="hero-kicker">FAST MARKET RESULT & CHART</div><h1>DPBOSS MARKET RESULT</h1><p>Latest market updates · Jodi chart · Panel chart · Date-wise history</p><div class="hero-actions"><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">RESULT HISTORY</a></div></section>`;
+  const search = `<section class="market-toolbar"><h2>WORLD ME SABSE FAST RESULT</h2><p>Market-wise latest published results</p><input id="marketSearch" type="search" placeholder="Search market name..." aria-label="Search market"></section>`;
+  const script = `<script>document.addEventListener('DOMContentLoaded',()=>{const input=document.getElementById('marketSearch');if(input)input.addEventListener('input',()=>{const q=input.value.toLowerCase();document.querySelectorAll('.market-grid .market').forEach(card=>{card.style.display=card.innerText.toLowerCase().includes(q)?'':'none';});});});</script>`;
+  const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS<br>Fast Market Results !!</div></section>`;
+  const intro = `<section class="description-card"><strong>DPBOSS MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
   const count = `<div class="market-count"><b>${s.markets.length}</b> markets listed <span>·</span> <b>${todayResults.length}</b> results published today</div>`;
-  res.send(page("Market Result", intro + lucky + latestBlock + count + search + `<div class="market-grid">${board}</div>` + '<div class="bottom-nav"><a href="/history">HISTORY</a><button type="button" onclick="location.reload()">REFRESH</button></div>' + script));
+  const bottom = `<div class="bottom-nav"><a href="/">HOME</a><a href="/jodi">JODI CHART</a><button type="button" onclick="location.reload()">REFRESH</button></div>`;
+  res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + script));
 });
 
 function chartMarketName(name) {
@@ -232,33 +465,34 @@ function marketChooser(s, mode) {
   const cards = s.markets.map(m => `<a class="market-pick" data-market-name="${esc(chartMarketName(m.name).toLowerCase())}" href="/${mode}?market=${encodeURIComponent(m.id)}"><strong>${esc(chartMarketName(m.name))}</strong><span>Open ${title} Chart →</span></a>`).join("");
   return `<section class="chooser-head"><div class="section-kicker">MARKET CHARTS</div><h2>Select Market</h2><p>Search and select a market to open its ${title} chart.</p><input id="chartMarketSearch" type="search" placeholder="Search ${title.toLowerCase()} market..." aria-label="Search market"></section><section class="market-chooser-grid" id="marketChooserGrid">${cards || '<p class="muted">No markets available.</p>'}</section><script>document.addEventListener('DOMContentLoaded',()=>{const i=document.getElementById('chartMarketSearch');if(!i)return;i.addEventListener('input',()=>{const q=i.value.trim().toLowerCase();document.querySelectorAll('.market-pick').forEach(a=>a.hidden=!a.dataset.marketName.includes(q));});});</script>`;
 }
-function renderJodiChart(m) {
-  // Keep legacy Jodi-only records visible; older imports may not contain both pannas.
-  const published = m.results.filter(r => resultIsVisible(r) && validDate(r.date) && (validJodi(String(r.jodi || "")) || resultIsComplete(r))).sort((a,b)=>a.date.localeCompare(b.date));
+function renderJodiChart(m, markets = []) {
+  // Seven weekday columns, matching the supplied Jodi chart reference.
+  const published = m.results.filter(r => resultIsVisible(r) && validDate(r.date) &&
+    (validJodi(String(r.jodi || "")) || resultIsComplete(r))).sort((a,b)=>a.date.localeCompare(b.date));
   const latest = published.length ? published[published.length-1] : null;
   const weeks = groupedWeeks(published);
-  const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat"];
+  const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const resultByDate = new Map(published.map(r=>[r.date,r]));
   const rows = weeks.map(([start]) => {
     const startDate = dateParts(start).date;
-    const endDate = new Date(startDate); endDate.setUTCDate(endDate.getUTCDate()+5);
-    const dateLabel = `${shortDate(start)} – ${shortDate(isoDate(endDate))}`;
     const cells = dayNames.map((_,idx) => {
       const day = new Date(startDate); day.setUTCDate(day.getUTCDate()+idx);
       const date = isoDate(day), r = resultByDate.get(date);
-      if (!r) return `<td><span class="blank-day">—</span></td>`;
-      const value = validJodi(String(r.jodi || "")) ? String(r.jodi) : resultJodi(r), isLatest = latest && r.date === latest.date;
-      return `<td><a class="jodi-cell${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)}">${esc(value)}</a></td>`;
+      if (!r) return `<td><span class="blank-day" aria-label="No result">—</span></td>`;
+      const value = validJodi(String(r.jodi || "")) ? String(r.jodi) : resultJodi(r);
+      const isLatest = latest && r.date === latest.date;
+      return `<td><a class="jodi-cell${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)}" aria-label="${shortDate(r.date)}: ${esc(value)}">${esc(value)}</a></td>`;
     }).join("");
-    return `<tr><td class="date-range">${dateLabel}</td>${cells}</tr>`;
+    return `<tr>${cells}</tr>`;
   }).join("");
-  const sunday = published.filter(r => dateParts(r.date).date.getUTCDay() === 0);
-  const sundayBlock = sunday.length ? `<div class="sunday-list"><strong>Sunday results:</strong> ${sunday.map(r=>`<a href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}">${shortDate(r.date)} · ${esc(resultJodi(r))}</a>`).join(" · ")}</div>` : "";
-  const body = rows ? `<div class="chart-table-wrap"><table class="chart-table jodi-table"><colgroup><col class="date-col">${dayNames.map(()=>'<col class="day-col">').join("")}</colgroup><thead><tr><th>Date</th>${dayNames.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>${sundayBlock}<p class="chart-note">Only saved, published results are shown. Tap a number to open its result details.</p>` : `<div class="chart-empty">No published results are available for this market yet.</div>`;
-  return `${chartHero(m,latest,"jodi")}<section class="chart-section" id="chart"><h2 class="chart-title">${esc(chartMarketName(m.name).toUpperCase())} JODI RECORD</h2>${body}</section><div id="chart-bottom"></div>`;
+  const table = rows ? `<div class="jodi-table-wrap"><table class="jodi-table" aria-label="${esc(chartMarketName(m.name))} Jodi chart"><thead><tr>${dayNames.map(d=>`<th scope="col">${d}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="chart-empty">No published results are available for this market yet.</div>`;
+  const footerLinks = markets.filter(x=>x.id !== m.id).map(x=>`<a href="/panel?market=${encodeURIComponent(x.id)}">${esc(chartMarketName(x.name))} Panel Chart</a>`).join("");
+  const footer = `<section class="jodi-chart-footer" aria-label="More market charts"><div class="jodi-footer-links">${footerLinks || `<a href="/panel">View Panel Charts</a>`}</div><div class="jodi-footer-brand">DPBOSSSS.COM</div><div class="jodi-footer-copy">All Rights Reserved®<br>(1998-2026)<small>Market Results &amp; Charts</small></div></section>`;
+  return `<section class="jodi-page"><h1 class="jodi-page-title">${esc(chartMarketName(m.name).toUpperCase())} DAY CHART</h1>${table}<p class="jodi-chart-note">Tap any result to view its saved date-wise details.</p></section>${footer}<div id="chart-bottom"></div>`;
 }
-function renderPanelChart(m) {
-  const published = m.results.filter(r => resultIsVisible(r) && validDate(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
+function renderPanelChart(m, markets = []) {
+  const published = m.results.filter(r => resultIsVisible(r) && validDate(r.date))
+    .sort((a,b)=>a.date.localeCompare(b.date));
   const latest = published.length ? published[published.length-1] : null;
   const weeks = groupedWeeks(published);
   const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -271,26 +505,33 @@ function renderPanelChart(m) {
       const day = new Date(startDate); day.setUTCDate(day.getUTCDate()+idx);
       const date = isoDate(day), r = resultByDate.get(date);
       if (!r) return `<td><span class="blank-day">—</span></td>`;
+      const open = openIsPublished(r) && validPanna(String(r.openPanna || "")) ? String(r.openPanna) : "";
+      const close = closeIsPublished(r) && validPanna(String(r.closePanna || "")) ? String(r.closePanna) : "";
+      const jodi = validJodi(String(r.jodi || "")) ? String(r.jodi) : (resultIsComplete(r) ? resultJodi(r) : "");
       const isLatest = latest && r.date === latest.date;
-      const openText = openIsPublished(r) && validPanna(String(r.openPanna || "")) ? r.openPanna : "—"; const closeText = closeIsPublished(r) && validPanna(String(r.closePanna || "")) ? r.closePanna : "—"; const jodiText = validJodi(String(r.jodi || "")) ? String(r.jodi) : (resultIsComplete(r) ? resultJodi(r) : "—");
-      return `<td><a class="panel-result${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)} · ${esc(openText)}-${esc(jodiText)}-${esc(closeText)}"><span class="panna">${esc(openText)}</span><strong>${esc(jodiText)}</strong><span class="panna">${esc(closeText)}</span></a></td>`;
+      const openDigits = open ? [...open].map(d=>`<span class="left-digit">${esc(d)}</span>`).join("") : `<span class="left-digit missing">*</span><span class="left-digit missing">*</span><span class="left-digit missing">*</span>`;
+      const closeDigits = close ? [...close].map(d=>`<span class="right-digit">${esc(d)}</span>`).join("") : `<span class="right-digit missing">*</span><span class="right-digit missing">*</span><span class="right-digit missing">*</span>`;
+      const middle = jodi ? esc(jodi) : "**";
+      return `<td><a class="panel-cell${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)} · ${esc(open || "—")}-${middle}-${esc(close || "—")}" aria-label="${shortDate(r.date)} panel result">${openDigits}<strong class="middle-jodi${jodi ? "" : " missing"}">${middle}</strong>${closeDigits}</a></td>`;
     }).join("");
     return `<tr><td class="date-range">${dateLabel}</td>${cells}</tr>`;
   }).join("");
-  const body = rows ? `<div class="chart-table-wrap"><table class="chart-table panel-table"><colgroup><col class="date-col">${dayNames.map(()=>'<col class="day-col">').join("")}</colgroup><thead><tr><th>Date</th>${dayNames.map(d=>`<th>${d}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div><p class="chart-note">Each cell shows Open Panna, Jodi and Close Panna. Only saved, published results are shown.</p>` : `<div class="chart-empty">No published results are available for this market yet.</div>`;
-  return `${chartHero(m,latest,"panel")}<section class="chart-section" id="chart"><h2 class="chart-title">${esc(chartMarketName(m.name).toUpperCase())} PANEL RECORD</h2>${body}</section><div id="chart-bottom"></div>`;
+  const table = rows ? `<div class="panel-table-wrap"><table class="panel-reference-table" aria-label="${esc(chartMarketName(m.name))} Panel Chart"><colgroup><col class="date-col">${dayNames.map(()=>'<col class="day-col">').join("")}</colgroup><thead><tr><th scope="col">Date</th>${dayNames.map(d=>`<th scope="col">${d}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="chart-empty">No published results are available for this market yet.</div>`;
+  const footerLinks = markets.filter(x=>x.id !== m.id).map(x=>`<a href="/panel?market=${encodeURIComponent(x.id)}">${esc(chartMarketName(x.name))} Panel Chart</a>`).join("");
+  const footer = `<section class="panel-chart-footer" aria-label="More panel charts"><div class="panel-footer-links">${footerLinks || `<a href="/panel">View Panel Charts</a>`}</div><div class="panel-footer-brand">DPBOSSSS.COM</div><div class="panel-footer-copy">All Rights Reserved®<br>(1998-2026)<small>Market Results &amp; Charts</small></div></section>`;
+  return `<section class="panel-page"><h1 class="panel-page-title">${esc(chartMarketName(m.name).toUpperCase())} DAY PANEL CHART</h1>${table}</section>${footer}<div id="chart-bottom"></div>`;
 }
 app.get("/jodi", (req,res) => {
   const s = readStore(), marketId = String(req.query.market || "");
   const m = s.markets.find(x=>x.id === marketId);
   if (!m) return res.send(page("Jodi Chart",marketChooser(s,"jodi")));
-  res.send(page("Jodi Chart",renderJodiChart(m)));
+  res.send(page("Jodi Chart",renderJodiChart(m,s.markets)));
 });
 app.get("/panel", (req,res) => {
   const s = readStore(), marketId = String(req.query.market || "");
   const m = s.markets.find(x=>x.id === marketId);
   if (!m) return res.send(page("Panel Chart",marketChooser(s,"panel")));
-  res.send(page("Panel Chart",renderPanelChart(m)));
+  res.send(page("Panel Chart",renderPanelChart(m,s.markets)));
 });
 
 app.get("/five-year-chart", (req,res) => {
@@ -486,4 +727,9 @@ app.get("/admin/backup",adminOnly,(req,res)=>{res.send(page("Backup & Restore",`
 app.get("/admin/backup/download",adminOnly,(req,res)=>{res.setHeader("Content-Type","application/json");res.setHeader("Content-Disposition",`attachment; filename="dpboss-backup-${new Date().toISOString().slice(0,10)}.json"`);res.send(JSON.stringify(readStore(),null,2));});
 app.post("/admin/backup/restore",adminOnly,upload.single("backup"),(req,res)=>{try{if(!req.file)throw Error("Choose a backup file.");const s=JSON.parse(req.file.buffer.toString("utf8"));if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");for(const m of s.markets){if(!m.id||!m.name||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");for(const r of m.results){if(!validDate(r.date)||!validPanna(r.openPanna)||!validPanna(r.closePanna)||typeof r.published!=="boolean")throw Error("Backup result data is invalid.");}}logAction(s,"Backup restored","Data restored from uploaded JSON backup");writeStore(s);req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");}catch(e){req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}});
 app.use((err,req,res,next)=>{if(err instanceof multer.MulterError){req.session.flash="Upload failed: file must be under 2 MB.";return res.redirect("/admin/backup");}console.error(err);res.status(500).send("Server error. Check the Termux terminal.");});
-app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.SATTA_API_KEY && process.env.SATTA_DOMAIN_KEY && process.env.SATTA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, SATTA_API_REFRESH_MS); } });
+initializeDatabase().then(() => {
+  app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.SATTA_API_KEY && process.env.SATTA_DOMAIN_KEY && process.env.SATTA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, SATTA_API_REFRESH_MS); } });
+}).catch(err => {
+  console.error("Database initialization failed:", err.message);
+  process.exit(1);
+});

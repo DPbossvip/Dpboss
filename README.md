@@ -106,3 +106,40 @@ Configure these private environment variables in Render (do not commit real cred
 The server sends a JSON POST body with `api_key`, `domain_key`, and `domain`, matching the PHP kit. It reads results from `results.data`. Admins can run an immediate sync from Admin → API Sync. Automatic sync starts only when all three credentials are configured. Existing admin-entered results are protected; an API refresh will not overwrite them. An already saved close result is retained if the provider temporarily returns an empty close value. Existing market names and configured timings are preserved.
 
 Never commit real API credentials to GitHub. Rotate credentials that have been shared in chat or public locations.
+
+
+## v1.7 usability and chart-link fix
+- Default local port is now 5000 (Render continues to use its supplied PORT).
+- Market-card Jodi and Panel buttons now open the selected market directly.
+- The legacy `/five-year-chart?mode=...&market=...` URL redirects to the matching selected chart instead of ignoring the market ID.
+- Jodi and Panel market selection now has an in-page search and compact responsive market list, suitable for large API market lists.
+- Clicking the DPBOSS brand returns to Home; Admin Login is available in the footer.
+- Existing Admin CRUD, API credentials handling, API sync and result storage logic are retained.
+
+### Updating an existing Termux installation safely
+Back up `server.js` first. Replace only the application files from this release; do not delete or overwrite `.env` or `data/store.json`. Keep `.env` private and keep a separate JSON backup from Admin → Backup before any deployment.
+
+
+## MongoDB Atlas persistence
+
+Set `MONGODB_URI` and optionally `MONGODB_DATABASE=dpboss` in the deployment environment.
+When MongoDB is configured, markets are stored in the `markets` collection, date-wise
+results in `daily_results`, and application counters/audit logs in `app_state`.
+On the first connection to an empty database, the app migrates the existing
+`data/store.json` contents into MongoDB and leaves the JSON file untouched.
+Without `MONGODB_URI`, local JSON storage remains enabled for development.
+
+Install dependencies with `npm install` (the MongoDB Node.js driver is included).
+
+## Screenshot-matched DPBOSS homepage update (2026-11-06)
+- Reworked the public homepage into a mobile-first layout based on the supplied references: DPBOSS logo header, welcome and intro panels, two-column Golden Ank / Final Ank area, latest published result panel, searchable market list, and fixed bottom navigation.
+- Applied the peach background, red borders, pink section headers, yellow highlighted market rows, navy market titles, purple Jodi/Panel controls, and blue bottom navigation.
+- Lucky Ank values are calculated only from complete results published for the current India date; no sample or predicted values are inserted.
+- This update changes the homepage presentation only. Existing SattaAPI sync, MongoDB persistence, admin routes, charts, history, and result storage logic are retained.
+- When updating an existing deployment, replace the application files but keep your private `.env` and any local `data/` directory. MongoDB-backed records remain in the configured database.
+
+## v2.5 Panel chart reference layout
+- Panel chart now uses a blue market/day title bar and a yellow Date + Monday-to-Sunday header.
+- Each weekly row shows the date range in the first column and a compact 3×3 panna layout in each day cell: Open Panna digits vertically on the left, Jodi in the center, and Close Panna digits vertically on the right.
+- Uses only saved, published result fields; missing/unpublished panna values remain marked rather than being fabricated.
+- Added the matching peach-and-blue market chart links and DPBOSSSS.COM copyright footer.

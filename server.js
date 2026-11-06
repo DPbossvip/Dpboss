@@ -386,7 +386,7 @@ main{width:100%;min-width:0}
 body{background:#ffc994}
 header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:7px 9px 5px;padding:16px 8px 13px;box-shadow:0 2px 0 #a80e1d}
 .brand{font-family:Georgia,serif;font-size:clamp(34px,9vw,48px);font-weight:900;letter-spacing:-1.5px;color:#111;text-shadow:none}
-.brand:before{content:'Dp';font-family:cursive;font-style:italic;color:#ec078d;font-size:1.18em;margin-right:3px}
+.brand:before{content:'DP';font-family:cursive;font-style:italic;color:#ec078d;font-size:1.18em;margin-right:3px}
 .tag{display:none}
 nav{display:none}
 main{max-width:760px;padding:4px 9px calc(76px + env(safe-area-inset-bottom))}
@@ -505,7 +505,7 @@ footer{display:none}
 </style>${admin ? "<style>" + ADMIN_CSS + "</style>" : title === "Market Result" ? "<style>" + HOME_CSS + "</style>" : ""}<script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
-</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">DPBOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
+</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">BOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
 }
 function resultTable(r) {
   const openAnk = r.openAnk ?? pannaAnk(r.openPanna);

@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-const PORT = Number(process.env.PORT || 3002);
+const PORT = Number(process.env.PORT || 5000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -92,6 +92,9 @@ input,select{width:100%;padding:10px;border:1px solid #cbbd9f;border-radius:4px;
 footer{text-align:center;padding:18px;color:#756a58;font-size:12px;border-top:1px solid #ead8c0;background:#fff}.chart-hero{background:#fff;border:1px solid #e1a75e;border-top:4px solid var(--orange);border-radius:3px;padding:12px;text-align:center;margin:0 0 10px}.chart-hero h2{font-size:clamp(20px,5vw,28px)!important}.chart-hero .chart-latest{display:block;color:#173c68;font-size:clamp(22px,6vw,30px);margin:4px 0 8px;font-weight:900}.chart-subtitle{font-size:12px;font-weight:800;color:#8c261e;letter-spacing:1px}.chart-actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}.chart-actions a{background:var(--navy);color:white;text-decoration:none;padding:8px 12px;border-radius:3px;font-size:12px;font-weight:700}.chart-section{background:#fff;border:1px solid #e2c9a8;margin-bottom:12px;padding:8px}.chart-title{text-align:center;background:#f7e3c8;color:#8a211b;padding:9px;font-size:16px!important;margin:0 0 8px!important}.chart-table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}.chart-table{min-width:590px;border-collapse:collapse;table-layout:fixed}.chart-table th{background:#f4d7b4;color:#6e211c;padding:7px 2px}.chart-table td{padding:4px 2px;background:#fff;text-align:center}.chart-table .date-col{width:76px}.chart-table .day-col{width:auto}.date-range{font-size:10px;font-weight:800;color:#5c3525;background:#fff0dc!important;line-height:1.35}.jodi-cell{display:block;background:#fff0a6;color:#111;border:1px solid #d8b54a;padding:7px 1px;text-decoration:none;font-size:14px;font-weight:900}.panel-result{display:flex;flex-direction:column;align-items:center;gap:1px;background:#fff0a6;color:#111;border:1px solid #d8b54a;padding:3px 1px;text-decoration:none;font-weight:900}.panel-result .panna{font-size:10px}.panel-result strong{font-size:14px}.jodi-cell.latest,.panel-result.latest{background:#ffe08a;border-color:#a66a13}.blank-day{color:#b5a99a;font-size:12px}.chart-note{font-size:11px;color:#66584b;padding:8px}.chart-empty{text-align:center;padding:24px 10px;color:#6b6258}.sunday-list{font-size:12px;padding:8px}.sunday-list a{color:#153d6c;margin:0 4px}
 @media(max-width:560px){nav{justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap}nav a{white-space:nowrap;padding:11px 9px;font-size:12px}main{padding-left:6px;padding-right:6px}.row,.stats{grid-template-columns:1fr}th,td{padding:7px 3px;font-size:11px}td.num{font-size:15px}.panel{padding:10px}.market{padding:9px 58px;min-height:92px}.result-line{font-size:clamp(18px,5.7vw,26px);letter-spacing:0}.market-action{font-size:11px;padding:7px 5px}.market-times{gap:10px;font-size:11px}.bottom-nav a,.bottom-nav button{padding:9px 5px;font-size:12px}.history-table{min-width:560px}.chart-table{min-width:560px}}
 @media(max-width:360px){.market{padding-left:51px;padding-right:51px}.market-action{font-size:10px;padding:6px 4px}.market h2{font-size:18px}.result-line{font-size:17px}.market-times{gap:6px;font-size:10px}.bottom-nav{gap:4px}.bottom-nav a,.bottom-nav button{font-size:11px;padding:8px 3px}}
+.chooser-head{background:#fff;border:1px solid #e6d4bc;border-top:4px solid var(--orange);padding:15px;margin-bottom:10px}.chooser-head h2{margin:5px 0}.chooser-head p{font-size:13px;color:var(--muted);margin:4px 0 8px}.chooser-head input{margin:5px 0 0}.market-chooser-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.market-pick{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:12px;background:#fff;border:1px solid #e5c9a7;border-left:4px solid var(--orange);color:#172e52;text-decoration:none}.market-pick strong{font-size:13px;overflow-wrap:anywhere}.market-pick span{flex:none;font-size:10px;font-weight:800;color:#a52a25}.market-pick[hidden]{display:none}
+@media(max-width:560px){.market-chooser-grid{grid-template-columns:1fr}.market-pick{padding:11px}.market-pick strong{font-size:12px}}
+@media(min-width:640px){.market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* DPBOSS-inspired responsive result-board refinement */
 .home-hero{background:linear-gradient(135deg,#10294f,#1b4776);color:#fff;border:1px solid #0c2343;border-top:5px solid var(--orange);padding:20px 14px;text-align:center;margin:0 0 12px;box-shadow:0 3px 10px #10294f20}
@@ -101,10 +104,35 @@ footer{text-align:center;padding:18px;color:#756a58;font-size:12px;border-top:1p
 @media(min-width:640px){main{max-width:980px;padding-left:14px;padding-right:14px}.market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.lucky-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.market-toolbar input{max-width:280px}}
 @media(max-width:390px){.market-toolbar{align-items:stretch;flex-direction:column}.market-toolbar input{max-width:100%}.market-grid .market{padding-left:65px;padding-right:65px}.market-grid .market h2{font-size:17px}.market-grid .market-action{font-size:11px;padding:7px 7px}}
 
+
+/* Mobile-first fit: keep all public pages inside the actual device width. */
+html,body{width:100%;max-width:100%;overflow-x:hidden}
+main{width:100%;min-width:0}
+.chart-table-wrap,.table-wrap{width:100%;max-width:100%;overflow-x:auto}
+@media(max-width:600px){
+  header{padding:10px 7px 8px}.brand{font-size:clamp(27px,8vw,38px)}.tag{font-size:9px;letter-spacing:1px}
+  nav{width:100%;justify-content:flex-start;flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}nav a{flex:0 0 auto;padding:10px 9px;font-size:11px}
+  main{padding:7px 5px calc(72px + env(safe-area-inset-bottom))}
+  .panel,.home-hero,.home-lucky,.live-panel,.chart-section,.chart-hero{padding:9px;margin-bottom:8px}
+  .home-hero h1{font-size:22px}.home-hero p{font-size:11px}.hero-actions a,.home-link{padding:8px;font-size:10px}
+  .lucky-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.lucky-chip{padding:6px;font-size:9px}.lucky-chip strong{font-size:12px}
+  .market-toolbar{padding:8px;gap:6px}.market-toolbar h2{font-size:16px}.market-toolbar p{font-size:10px}.market-toolbar input{max-width:100%;font-size:12px}
+  .market-grid{grid-template-columns:minmax(0,1fr);gap:6px}.market-grid .market{min-height:88px;padding:9px 58px 8px}.market-grid .market h2{font-size:16px}.market-grid .result-line{font-size:clamp(17px,5vw,22px)}.market-grid .market-action{font-size:10px;padding:6px 5px}.market-times{gap:8px;font-size:10px}
+  .chart-table{width:100%;min-width:0;table-layout:fixed}.chart-table .date-col{width:48px}.chart-table .day-col{width:auto}.chart-table th{font-size:9px;padding:5px 1px;white-space:nowrap}.chart-table td{font-size:9px;padding:2px 1px}.date-range{font-size:8px;line-height:1.2;overflow-wrap:anywhere}.jodi-cell{font-size:11px;padding:6px 0;border-width:1px}.panel-result{padding:2px 0;gap:0}.panel-result .panna{font-size:8px;line-height:1.1}.panel-result strong{font-size:10px;line-height:1.1}.chart-title{font-size:13px!important;padding:7px}.chart-note{font-size:9px;padding:5px}
+  .history-table{min-width:0;width:100%;table-layout:fixed}.history-table th{font-size:8px;padding:5px 1px}.history-table td{font-size:9px;padding:5px 1px;overflow-wrap:anywhere}.history-table .num{font-size:11px}
+  .row,.stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.stat{padding:9px}.stat strong{font-size:20px}
+  .bottom-nav{left:5px;right:5px;bottom:calc(4px + env(safe-area-inset-bottom));gap:4px}.bottom-nav a,.bottom-nav button{font-size:11px;padding:8px 4px}
+}
+@media(max-width:360px){
+  .chart-table .date-col{width:43px}.chart-table th{font-size:8px}.chart-table td{font-size:8px}.jodi-cell{font-size:10px}.panel-result .panna{font-size:7px}.panel-result strong{font-size:9px}
+  .history-table th{font-size:7px}.history-table td{font-size:8px}.history-table .num{font-size:10px}
+  .market-grid .market{padding-left:52px;padding-right:52px}.market-grid .market-action{font-size:9px;padding:5px 4px}
+}
+
 </style><script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
-</script></head><body><header><a class="brand-link" href="/login" aria-label="Admin Login"><div class="brand">DPBOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts</footer></body></html>`;
+</script></head><body><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">DPBOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
 }
 function resultTable(r) {
   const openAnk = r.openAnk ?? pannaAnk(r.openPanna);
@@ -119,9 +147,9 @@ function marketCard(m, history = false, query = "") {
   if (!history) {
     const isHighlight = /karnataka|rajan morning/i.test(m.name);
     const result = latest ? (resultIsComplete(latest) ? `${latest.openPanna}-${resultJodi(latest)}-${latest.closePanna}` : (openIsPublished(latest) ? `${latest.openPanna}-${pannaAnk(latest.openPanna)}-…` : `…-…-${latest.closePanna}`)) : "Result Pending";
-    return `<section class="market ${isHighlight ? "highlight" : ""}"><a class="market-action left" href="/five-year-chart?mode=jodi&market=${encodeURIComponent(m.id)}">Jodi</a><a class="market-action right" href="/five-year-chart?mode=panel&market=${encodeURIComponent(m.id)}">Panel</a><h2>${esc(chartMarketName(m.name))}</h2><div class="result-line">${esc(result)}</div><div class="market-times"><span>${esc(formatTime(m.openTime))}</span><span>${esc(formatTime(m.closeTime))}</span></div>${latest ? `<div class="muted" style="font-size:10px;margin-top:3px">${esc(latest.date)}</div>` : `<div class="empty-result">Result will be available soon</div>`}</section>`;
+    return `<section class="market ${isHighlight ? "highlight" : ""}"><a class="market-action left" href="/jodi?market=${encodeURIComponent(m.id)}">Jodi</a><a class="market-action right" href="/panel?market=${encodeURIComponent(m.id)}">Panel</a><h2>${esc(chartMarketName(m.name))}</h2><div class="result-line">${esc(result)}</div><div class="market-times"><span>${esc(formatTime(m.openTime))}</span><span>${esc(formatTime(m.closeTime))}</span></div>${latest ? `<div class="muted" style="font-size:10px;margin-top:3px">${esc(latest.date)}</div>` : `<div class="empty-result">Result will be available soon</div>`}</section>`;
   }
-  return `<section class="market"><h2>${esc(chartMarketName(m.name))}</h2><div class="meta"><span>Open: <b>${esc(m.openTime)}</b></span><span>Close: <b>${esc(m.closeTime)}</b></span></div>${rows.length ? `<div class="table-wrap"><table class="history-table"><thead><tr><th>Date</th><th>Open Panna</th><th>Open Ank</th><th>Jodi</th><th>Close Panna</th><th>Close Ank</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date)}</td><td class="num">${esc(openIsPublished(r) ? r.openPanna : "—")}</td><td class="num">${esc(openIsPublished(r) ? (r.openAnk ?? pannaAnk(r.openPanna)) : "—")}</td><td class="num">${esc(resultIsComplete(r) ? resultJodi(r) : "—")}</td><td class="num">${esc(closeIsPublished(r) ? r.closePanna : "—")}</td><td class="num">${esc(closeIsPublished(r) ? (r.closeAnk ?? pannaAnk(r.closePanna)) : "—")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No matching published results.</p>'}</section>`;
+  return `<section class="market"><h2>${esc(chartMarketName(m.name))}</h2><div class="meta"><span>Open: <b>${esc(m.openTime)}</b></span><span>Close: <b>${esc(m.closeTime)}</b></span></div>${rows.length ? `<div class="table-wrap"><table class="history-table"><thead><tr><th>Date</th><th>Open Panna</th><th>Open Ank</th><th>Jodi</th><th>Close Panna</th><th>Close Ank</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date)}</td><td class="num">${esc(openIsPublished(r) ? r.openPanna : "—")}</td><td class="num">${esc(openIsPublished(r) ? (r.openAnk ?? pannaAnk(r.openPanna)) : "—")}</td><td class="num">${esc(validJodi(String(r.jodi || "")) ? String(r.jodi) : (resultIsComplete(r) ? resultJodi(r) : "—"))}</td><td class="num">${esc(closeIsPublished(r) ? r.closePanna : "—")}</td><td class="num">${esc(closeIsPublished(r) ? (r.closeAnk ?? pannaAnk(r.closePanna)) : "—")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No matching published results.</p>'}</section>`;
 }
 function formatTime(value) { const [h,m] = String(value || "00:00").split(":").map(Number); const suffix = h >= 12 ? "PM" : "AM"; const hour = h % 12 || 12; return `${hour}:${String(m).padStart(2,"0")} ${suffix}`; }
 
@@ -200,10 +228,13 @@ function chartHero(m, latest, mode) {
   return `<section class="chart-hero"><h2>${esc(name)}</h2><strong class="chart-latest">${esc(latestText)}</strong><p class="chart-subtitle">${mode === "jodi" ? "JODI RESULT CHART" : "PANEL RESULT CHART"}</p><div class="chart-actions"><a href="#chart-bottom">Go to Bottom</a><a href="${alternateHref}">${alternate}</a></div></section>`;
 }
 function marketChooser(s, mode) {
-  return `<section class="panel"><h2>Select Market</h2><p>Choose a market to open its ${mode === "jodi" ? "Jodi" : "Panel"} chart.</p>${s.markets.map(m=>`<p><a class="btn" href="/${mode}?market=${encodeURIComponent(m.id)}">${esc(chartMarketName(m.name))}</a></p>`).join("") || '<p class="muted">No markets available.</p>'}</section>`;
+  const title = mode === "jodi" ? "Jodi" : "Panel";
+  const cards = s.markets.map(m => `<a class="market-pick" data-market-name="${esc(chartMarketName(m.name).toLowerCase())}" href="/${mode}?market=${encodeURIComponent(m.id)}"><strong>${esc(chartMarketName(m.name))}</strong><span>Open ${title} Chart →</span></a>`).join("");
+  return `<section class="chooser-head"><div class="section-kicker">MARKET CHARTS</div><h2>Select Market</h2><p>Search and select a market to open its ${title} chart.</p><input id="chartMarketSearch" type="search" placeholder="Search ${title.toLowerCase()} market..." aria-label="Search market"></section><section class="market-chooser-grid" id="marketChooserGrid">${cards || '<p class="muted">No markets available.</p>'}</section><script>document.addEventListener('DOMContentLoaded',()=>{const i=document.getElementById('chartMarketSearch');if(!i)return;i.addEventListener('input',()=>{const q=i.value.trim().toLowerCase();document.querySelectorAll('.market-pick').forEach(a=>a.hidden=!a.dataset.marketName.includes(q));});});</script>`;
 }
 function renderJodiChart(m) {
-  const published = m.results.filter(r => resultIsComplete(r) && validDate(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
+  // Keep legacy Jodi-only records visible; older imports may not contain both pannas.
+  const published = m.results.filter(r => resultIsVisible(r) && validDate(r.date) && (validJodi(String(r.jodi || "")) || resultIsComplete(r))).sort((a,b)=>a.date.localeCompare(b.date));
   const latest = published.length ? published[published.length-1] : null;
   const weeks = groupedWeeks(published);
   const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -216,7 +247,7 @@ function renderJodiChart(m) {
       const day = new Date(startDate); day.setUTCDate(day.getUTCDate()+idx);
       const date = isoDate(day), r = resultByDate.get(date);
       if (!r) return `<td><span class="blank-day">—</span></td>`;
-      const value = resultJodi(r), isLatest = latest && r.date === latest.date;
+      const value = validJodi(String(r.jodi || "")) ? String(r.jodi) : resultJodi(r), isLatest = latest && r.date === latest.date;
       return `<td><a class="jodi-cell${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)}">${esc(value)}</a></td>`;
     }).join("");
     return `<tr><td class="date-range">${dateLabel}</td>${cells}</tr>`;
@@ -241,7 +272,7 @@ function renderPanelChart(m) {
       const date = isoDate(day), r = resultByDate.get(date);
       if (!r) return `<td><span class="blank-day">—</span></td>`;
       const isLatest = latest && r.date === latest.date;
-      const openText = openIsPublished(r) ? r.openPanna : "—"; const closeText = closeIsPublished(r) ? r.closePanna : "—"; const jodiText = resultIsComplete(r) ? resultJodi(r) : "—";
+      const openText = openIsPublished(r) && validPanna(String(r.openPanna || "")) ? r.openPanna : "—"; const closeText = closeIsPublished(r) && validPanna(String(r.closePanna || "")) ? r.closePanna : "—"; const jodiText = validJodi(String(r.jodi || "")) ? String(r.jodi) : (resultIsComplete(r) ? resultJodi(r) : "—");
       return `<td><a class="panel-result${isLatest ? " latest" : ""}" href="/history?market=${encodeURIComponent(m.id)}&q=${encodeURIComponent(r.date)}" title="${shortDate(r.date)} · ${esc(openText)}-${esc(jodiText)}-${esc(closeText)}"><span class="panna">${esc(openText)}</span><strong>${esc(jodiText)}</strong><span class="panna">${esc(closeText)}</span></a></td>`;
     }).join("");
     return `<tr><td class="date-range">${dateLabel}</td>${cells}</tr>`;
@@ -265,6 +296,9 @@ app.get("/panel", (req,res) => {
 app.get("/five-year-chart", (req,res) => {
   const store = readStore();
   const mode = String(req.query.mode || "jodi") === "panel" ? "panel" : "jodi";
+  const marketId = String(req.query.market || "");
+  const market = marketId ? store.markets.find(m => m.id === marketId) : null;
+  if (market) return res.redirect(`/${mode}?market=${encodeURIComponent(market.id)}`);
   res.send(page("Market Charts", marketChooser(store, mode)));
 });
 

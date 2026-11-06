@@ -259,6 +259,77 @@ function localDateISO(date = new Date()) {
 }
 function adminOnly(req, res, next) { if (!req.session.admin) return res.redirect("/login"); next(); }
 function flash(req) { const m = req.session.flash; delete req.session.flash; return m ? `<div class="flash">${esc(m)}</div>` : ""; }
+const HOME_CSS = String.raw`
+body.home-page{background:#ffc994;color:#171717}
+body.home-page header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:8px 10px 10px;padding:17px 8px}
+body.home-page .brand{font-size:clamp(38px,10vw,58px);letter-spacing:-2px}
+body.home-page .tag{display:none}
+body.home-page main{max-width:900px;padding:0 10px 75px;margin:8px auto}
+body.home-page .welcome-card,body.home-page .description-card,body.home-page .home-lucky,body.home-page .live-panel,body.home-page .market-toolbar{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:17px;margin:9px 0;padding:14px;box-shadow:0 3px 0 rgba(150,35,35,.12)}
+body.home-page .welcome-card{min-height:105px;display:flex;align-items:center;justify-content:center;gap:14px;text-align:center}
+body.home-page .welcome-mark{font-size:42px}
+body.home-page .welcome-copy{font-size:clamp(17px,4.5vw,25px);font-weight:900;line-height:1.25}
+body.home-page .description-card{text-align:center;font-size:clamp(14px,3.7vw,19px);font-weight:700;line-height:1.35}
+body.home-page .description-card strong{color:#183d70}
+body.home-page .home-lucky{text-align:center}
+body.home-page .home-lucky h2,body.home-page .live-panel>div:first-child,body.home-page .market-toolbar h2{background:#f000a0;color:white;border:2px solid white;border-radius:30px;padding:9px 8px;font-size:clamp(18px,5vw,27px);font-weight:900;margin:0 0 10px}
+body.home-page .home-date{font-size:12px;font-weight:700}
+body.home-page .lucky-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+body.home-page .lucky-column{padding:8px;border-right:2px solid #ed1b2f}
+body.home-page .lucky-column:last-child{border:0}
+body.home-page .lucky-label{font-size:clamp(17px,4.5vw,24px);font-weight:900;color:#173d78}
+body.home-page .lucky-values{font-size:clamp(23px,6vw,34px);font-weight:900;color:#173d78}
+body.home-page .lucky-values small{display:block;font-size:10px;color:#4c392e;font-weight:600}
+body.home-page .live-panel{border-left:3px solid #ed1b2f;text-align:center}
+body.home-page .live-market{font-size:clamp(20px,5vw,28px);color:#173d78}
+body.home-page .live-result{font-size:clamp(28px,7vw,40px);color:#85205a}
+body.home-page .home-link{display:inline-block;background:#50329b;color:white;border-radius:9px;padding:9px 16px;font-weight:800;text-decoration:none}
+body.home-page .market-toolbar{display:block;text-align:center}
+body.home-page .market-toolbar h2{margin:0 0 8px}
+body.home-page .market-toolbar p{font-weight:700}
+body.home-page .market-toolbar input{max-width:100%;width:100%;min-height:45px;border:2px solid #ed1b2f;border-radius:10px;padding:10px}
+body.home-page .market-grid{border:3px solid #ed1b2f;border-radius:16px;overflow:hidden;gap:0;background:#ffd0a1}
+body.home-page .market-grid .market{border:0;border-bottom:2px solid #ed1b2f;border-radius:0;min-height:125px;padding:15px 65px 12px;background:#ffd0a1}
+body.home-page .market-grid .market:first-child,body.home-page .market-grid .market:nth-child(8n){background:#fff500}
+body.home-page .market-grid .market h2{font-size:clamp(20px,5vw,27px);color:#173d78}
+body.home-page .market-grid .result-line{font-size:clamp(25px,6vw,34px);font-weight:900;color:#84205a}
+body.home-page .market-grid .market-action{background:#56329b;color:#fff;border-radius:9px;font-weight:800;padding:8px}
+body.home-page .bottom-nav{position:fixed;z-index:99;bottom:5px;left:5px;right:5px;display:flex;gap:5px;padding:4px;background:#ffd0a1}
+body.home-page .bottom-nav a,body.home-page .bottom-nav button{flex:1;text-align:center;background:#123f9b;color:#fff;border:2px solid white;border-radius:8px;padding:10px 3px;font-weight:900;font-size:12px;text-decoration:none}
+@media(max-width:420px){body.home-page .welcome-card{padding:10px 6px}body.home-page .market-grid .market{padding-left:53px;padding-right:53px;min-height:112px}}
+`;
+const ADMIN_CSS = String.raw`
+.admin-page{background:#f3f6fb;color:#17243a}
+.admin-page main{max-width:1100px;margin:24px auto;padding:0 14px}
+.admin-page .panel{background:#fff;border:1px solid #e1e8f0;border-radius:16px;padding:20px;margin:0 0 18px;box-shadow:0 5px 18px rgba(25,45,75,.06)}
+.admin-page h2{font-size:22px;color:#172b4d;margin:5px 0 16px}
+.admin-page h3{font-size:17px;color:#263d5b}
+.admin-page .admin-kicker{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#3478c8;margin-bottom:8px}
+.admin-page .admin-overview{background:linear-gradient(120deg,#142c4d,#245b91);color:#fff}
+.admin-page .admin-overview h2{color:#fff}
+.admin-page .admin-overview .admin-kicker{color:#b9d9ff}
+.admin-page .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.admin-page .stat{background:#f4f7fb;border:1px solid #e4ebf3;border-radius:12px;padding:14px}
+.admin-page .admin-overview .stat{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.18);color:#fff}
+.admin-page .admin-overview .stat strong{color:#fff}
+.admin-page label{display:block;font-weight:700;color:#354966;margin:12px 0 6px}
+.admin-page input,.admin-page select{width:100%;min-height:46px;border:1px solid #ccd7e5;border-radius:10px;padding:10px 12px;background:#fff;color:#17243a}
+.admin-page button{min-height:46px;border:0;border-radius:10px;padding:11px 18px;background:#2168ad;color:#fff;font-weight:750;cursor:pointer;margin:6px 5px 6px 0}
+.admin-page button:hover{filter:brightness(.94)}
+.admin-page button.danger{background:#b93845}
+.admin-page .row{gap:12px}
+.admin-page .admin-market-card{border-top:4px solid #3478c8}
+.admin-page .admin-market-card hr{border-color:#e5ebf2!important}
+.admin-page .muted{color:#687b92}
+@media(max-width:650px){
+ .admin-page main{margin:14px auto;padding:0 10px}
+ .admin-page .panel{padding:15px;border-radius:13px}
+ .admin-page .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .admin-page .row{display:flex;flex-direction:column;gap:4px}
+ .admin-page button{width:100%;margin:5px 0}
+ .admin-page h2{font-size:20px}
+}
+`;
 function page(title, content, admin = false) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><title>${esc(title)} · DPBOSS</title><style>
 :root{--bg:#fff7e9;--ink:#171717;--navy:#132d56;--orange:#f58220;--red:#b71922;--line:#e5a24a;--muted:#66584b;--paper:#fffdf8;--green:#176b3a}
@@ -431,10 +502,10 @@ footer{display:none}
  .panel-cell .left-digit,.panel-cell .right-digit{font-size:11px}.panel-cell .middle-jodi{font-size:16px}
  .panel-reference-table th{font-size:11px}}
 
-</style><script>
+</style>${admin ? "<style>" + ADMIN_CSS + "</style>" : title === "Market Result" ? "<style>" + HOME_CSS + "</style>" : ""}<script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
-</script></head><body><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">DPBOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
+</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">DPBOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
 }
 function resultTable(r) {
   const openAnk = r.openAnk ?? pannaAnk(r.openPanna);
@@ -635,9 +706,9 @@ function adminSavedResults(m) {
 
 app.get("/admin",adminOnly,(req,res)=>{
  const s=readStore(), personalMarkets=s.markets.filter(m=>["MAHADEV","MAHADEV NIGHT"].includes(String(m.name||"").trim().toUpperCase())), total=personalMarkets.reduce((n,m)=>n+m.results.length,0), published=personalMarkets.reduce((n,m)=>n+m.results.filter(r=>resultIsVisible(r)).length,0), drafts=total-published;
- const add=`<section class="panel"><h2>Add Your Own Market</h2><form method="post" action="/admin/market/add"><label>Market name</label><input name="name" required maxlength="60" placeholder="e.g. My New Market"><div class="row"><div><label>Open time</label><input type="time" name="openTime" value="15:00" required></div><div><label>Close time</label><input type="time" name="closeTime" value="18:00" required></div><div style="display:flex;align-items:end"><button style="margin-bottom:12px;width:100%">Add Market</button></div></div></form></section>`;
- const cards=personalMarkets.map(m=>`<section class="panel"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
- res.send(page("Admin Dashboard",`${flash(req)}<section class="panel"><h2>Admin Dashboard</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${cards}` ,true));
+ const add=`<section class="panel admin-add"><div class="admin-kicker">MARKET SETUP</div><h2>Add a Personal Market</h2><form method="post" action="/admin/market/add"><label>Market name</label><input name="name" required maxlength="60" placeholder="e.g. My New Market"><div class="row"><div><label>Open time</label><input type="time" name="openTime" value="15:00" required></div><div><label>Close time</label><input type="time" name="closeTime" value="18:00" required></div><div style="display:flex;align-items:end"><button style="margin-bottom:12px;width:100%">Add Market</button></div></div></form></section>`;
+ const cards=personalMarkets.map(m=>`<section class="panel admin-market-card"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
+ res.send(page("Admin Dashboard",`${flash(req)}<section class="panel admin-overview"><div class="admin-kicker">DPBOSS CONTROL CENTER</div><h2>Dashboard Overview</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${cards}` ,true));
 });
 app.post("/admin/market/add",adminOnly,(req,res)=>{const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a market name and valid times.";return res.redirect("/admin");}const s=readStore(),m={id:"market-"+s.nextId++,name,openTime,closeTime,results:[]};s.markets.push(m);logAction(s,"Market added",name);writeStore(s);req.session.flash="Market added.";res.redirect("/admin");});
 app.post("/admin/market/update",adminOnly,(req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id),name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!m||!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Could not update market; check the values.";return res.redirect("/admin");}const before=m.name;m.name=name;m.openTime=openTime;m.closeTime=closeTime;logAction(s,"Market updated",`${before} → ${name} (${openTime}-${closeTime})`);writeStore(s);req.session.flash="Market details updated.";res.redirect("/admin");});

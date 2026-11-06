@@ -90,18 +90,27 @@ function persistStoreToMongo(snapshot) {
   return mongoWriteQueue;
 }
 
-function writeStore(s) {
+async function writeStore(s) {
   const normalized = normalizeStore(s);
   cachedStore = normalized;
   if (mongoDb) {
-    void persistStoreToMongo(JSON.parse(JSON.stringify(normalized))).catch(err => {
+    try {
+      await persistStoreToMongo(JSON.parse(JSON.stringify(normalized)));
+      return true;
+    } catch (err) {
       console.error("MongoDB persistence failed:", err.message);
-    });
-    return;
+      return false;
+    }
   }
   const tmp = DATA_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), { mode: 0o600 });
-  fs.renameSync(tmp, DATA_FILE);
+  try {
+    fs.renameSync(tmp, DATA_FILE);
+    return true;
+  } catch (err) {
+    console.error("Local storage persistence failed:", err.message);
+    return false;
+  }
 }
 
 async function initializeDatabase() {
@@ -710,10 +719,10 @@ app.get("/admin",adminOnly,(req,res)=>{
  const cards=personalMarkets.map(m=>`<section class="panel admin-market-card"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
  res.send(page("Admin Dashboard",`${flash(req)}<section class="panel admin-overview"><div class="admin-kicker">DPBOSS CONTROL CENTER</div><h2>Dashboard Overview</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${cards}` ,true));
 });
-app.post("/admin/market/add",adminOnly,(req,res)=>{const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a market name and valid times.";return res.redirect("/admin");}const s=readStore(),m={id:"market-"+s.nextId++,name,openTime,closeTime,results:[]};s.markets.push(m);logAction(s,"Market added",name);writeStore(s);req.session.flash="Market added.";res.redirect("/admin");});
-app.post("/admin/market/update",adminOnly,(req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id),name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!m||!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Could not update market; check the values.";return res.redirect("/admin");}const before=m.name;m.name=name;m.openTime=openTime;m.closeTime=closeTime;logAction(s,"Market updated",`${before} → ${name} (${openTime}-${closeTime})`);writeStore(s);req.session.flash="Market details updated.";res.redirect("/admin");});
-app.post("/admin/market/delete",adminOnly,(req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id);if(m){s.markets=s.markets.filter(x=>x.id!==req.body.id);logAction(s,"Market deleted",m.name);writeStore(s);}req.session.flash="Market deleted.";res.redirect("/admin");});
-app.post("/admin/result",adminOnly,(req,res)=>{
+app.post("/admin/market/add",adminOnly,async (req,res)=>{const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a market name and valid times.";return res.redirect("/admin");}const s=readStore(),m={id:"market-"+s.nextId++,name,openTime,closeTime,results:[]};s.markets.push(m);logAction(s,"Market added",name);req.session.flash=await writeStore(s)?"Market added.":"SAVE FAILED: data was not saved. Check server logs.";res.redirect("/admin");});
+app.post("/admin/market/update",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id),name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!m||!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Could not update market; check the values.";return res.redirect("/admin");}const before=m.name;m.name=name;m.openTime=openTime;m.closeTime=closeTime;logAction(s,"Market updated",`${before} → ${name} (${openTime}-${closeTime})`);req.session.flash=await writeStore(s)?"Market details updated.":"SAVE FAILED: data was not saved. Check server logs.";res.redirect("/admin");});
+app.post("/admin/market/delete",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id);if(m){s.markets=s.markets.filter(x=>x.id!==req.body.id);logAction(s,"Market deleted",m.name);const saved=await writeStore(s);req.session.flash=saved?"Market deleted.":"SAVE FAILED: deletion was not confirmed."; }else{req.session.flash="Market not found.";}res.redirect("/admin");});
+app.post("/admin/result",adminOnly,async (req,res)=>{
   const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),date=String(req.body.date||""),action=String(req.body.action||"");
   const old=m&&m.results.find(r=>r.date===date);
   if(!m||!validDate(date)){req.session.flash="Choose a valid market and date.";return res.redirect("/admin");}
@@ -729,7 +738,7 @@ app.post("/admin/result",adminOnly,(req,res)=>{
     entry.updatedAt=new Date().toISOString();
     if(old){m.results[m.results.findIndex(r=>r.date===date)]=entry;}else{m.results.push(entry);}
     logAction(s,old?"Result updated":"Result added",`${m.name} · ${date} · ${action==="publish-open"?"Open":"Close"} published`);
-    writeStore(s);req.session.flash=action==="publish-open"?"Open result published. You can publish Close later for the same date.":"Close result published.";return res.redirect("/admin");
+    const saved=await writeStore(s);req.session.flash=saved?(action==="publish-open"?"Open result published. You can publish Close later for the same date.":"Close result published."):"SAVE FAILED: result was not saved. Check server logs.";return res.redirect("/admin");
   }
   if(action==="publish"||action==="draft"){
     const openPanna=String(req.body.openPanna||old?.openPanna||""),closePanna=String(req.body.closePanna||old?.closePanna||"");
@@ -738,11 +747,11 @@ app.post("/admin/result",adminOnly,(req,res)=>{
     const entry={date,openPanna,openAnk,jodi:openAnk+closeAnk,closePanna,closeAnk,published,openPublished:published,closePublished:published,updatedAt:new Date().toISOString()};
     const idx=m.results.findIndex(r=>r.date===date);if(idx>=0)m.results[idx]=entry;else m.results.push(entry);
     logAction(s,old?"Result updated":"Result added",`${m.name} · ${date} · ${openPanna}/${entry.jodi}/${closePanna} · ${published?"both published":"draft"}`);
-    writeStore(s);req.session.flash=published?"Open and Close results published.":"Draft saved.";return res.redirect("/admin");
+    const saved=await writeStore(s);req.session.flash=saved?(published?"Open and Close results published.":"Draft saved."):"SAVE FAILED: result was not saved. Check server logs.";return res.redirect("/admin");
   }
   req.session.flash="Choose a valid publish action.";res.redirect("/admin");
 });
-app.post("/admin/result/toggle",adminOnly,(req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),r=m&&m.results.find(x=>x.date===req.body.date);if(r){r.published=!r.published;r.openPublished=r.published;r.closePublished=r.published;r.updatedAt=new Date().toISOString();logAction(s,r.published?"Result published":"Result unpublished",`${m.name} · ${r.date}`);writeStore(s);req.session.flash=r.published?"Result published.":"Result unpublished.";}res.redirect("/admin");});
+app.post("/admin/result/toggle",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),r=m&&m.results.find(x=>x.date===req.body.date);if(r){r.published=!r.published;r.openPublished=r.published;r.closePublished=r.published;r.updatedAt=new Date().toISOString();logAction(s,r.published?"Result published":"Result unpublished",`${m.name} · ${r.date}`);const saved=await writeStore(s);req.session.flash=saved?(r.published?"Result published.":"Result unpublished."):"SAVE FAILED: change was not saved.";}res.redirect("/admin");});
 
 // SattaAPI integration. Credentials are read only from server environment variables.
 const SATTA_API_URL = process.env.SATTA_API_URL || "https://matkaapi.sattaapi.com/wp-json/satta/v1/results";
@@ -869,7 +878,7 @@ async function autoSyncMarketApi() {
 app.get("/admin/logs",adminOnly,(req,res)=>{const s=readStore();const rows=s.logs.slice(0,200);res.send(page("Change Log",`<section class="panel"><h2>Recent Admin Changes</h2><p class="muted">Latest 200 actions; log is stored locally with the result data.</p>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.at.replace("T"," ").slice(0,19))}</td><td>${esc(x.action)}</td><td>${esc(x.detail)}</td></tr>`).join("")}</tbody></table></div>`:'<p>No changes logged yet.</p>'}</section>`,true));});
 app.get("/admin/backup",adminOnly,(req,res)=>{res.send(page("Backup & Restore",`${flash(req)}<section class="panel"><h2>Backup & Restore</h2><p>Download a copy of your markets, results and change log. Keep the file private.</p><a class="btn" href="/admin/backup/download">Download JSON Backup</a><hr style="border:0;border-top:1px solid #eee3cd;margin:20px 0"><h3>Restore from backup</h3><p class="muted">Restore replaces current local data. Download a backup first. Only restore a JSON backup created by this app.</p><form method="post" action="/admin/backup/restore" enctype="multipart/form-data"><label>Select backup JSON file (max 2 MB)</label><input type="file" name="backup" accept=".json,application/json" required><button class="danger">Restore Backup</button></form></section>`,true));});
 app.get("/admin/backup/download",adminOnly,(req,res)=>{res.setHeader("Content-Type","application/json");res.setHeader("Content-Disposition",`attachment; filename="dpboss-backup-${new Date().toISOString().slice(0,10)}.json"`);res.send(JSON.stringify(readStore(),null,2));});
-app.post("/admin/backup/restore",adminOnly,upload.single("backup"),(req,res)=>{try{if(!req.file)throw Error("Choose a backup file.");const s=JSON.parse(req.file.buffer.toString("utf8"));if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");for(const m of s.markets){if(!m.id||!m.name||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");for(const r of m.results){if(!validDate(r.date)||!validPanna(r.openPanna)||!validPanna(r.closePanna)||typeof r.published!=="boolean")throw Error("Backup result data is invalid.");}}logAction(s,"Backup restored","Data restored from uploaded JSON backup");writeStore(s);req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");}catch(e){req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}});
+app.post("/admin/backup/restore",adminOnly,upload.single("backup"),async (req,res)=>{try{if(!req.file)throw Error("Choose a backup file.");const s=JSON.parse(req.file.buffer.toString("utf8"));if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");for(const m of s.markets){if(!m.id||!m.name||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");for(const r of m.results){if(!validDate(r.date)||!validPanna(r.openPanna)||!validPanna(r.closePanna)||typeof r.published!=="boolean")throw Error("Backup result data is invalid.");}}logAction(s,"Backup restored","Data restored from uploaded JSON backup");if(!await writeStore(s))throw Error("Database save failed; restore was not confirmed.");req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");}catch(e){req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}});
 app.use((err,req,res,next)=>{if(err instanceof multer.MulterError){req.session.flash="Upload failed: file must be under 2 MB.";return res.redirect("/admin/backup");}console.error(err);res.status(500).send("Server error. Check the Termux terminal.");});
 initializeDatabase().then(() => {
   app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.SATTA_API_KEY && process.env.SATTA_DOMAIN_KEY && process.env.SATTA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, SATTA_API_REFRESH_MS); } });

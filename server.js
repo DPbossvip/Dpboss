@@ -118,21 +118,79 @@ async function initializeDatabase() {
   await resultCol.createIndex({ marketId: 1, date: 1 }, { unique: true });
   await resultCol.createIndex({ date: -1 });
   await marketCol.createIndex({ name: 1 });
+  // Add missing local markets/results without overwriting existing MongoDB records.
+  const legacy = readStore();
+  const existingMarkets = await marketCol.find({}).toArray();
+  const byId = new Map(existingMarkets.map(m => [String(m._id), m]));
+  const byName = new Map(existingMarkets.map(m => [String(m.name || "").trim().toLowerCase(), m]));
+
+  for (const m of legacy.markets) {
+    const localId = String(m.id);
+    const nameKey = String(m.name || "").trim().toLowerCase();
+    let existing = byId.get(localId) || byName.get(nameKey);
+    const targetId = existing ? String(existing._id) : localId;
+
+    if (!existing) {
+      const marketDoc = {
+        _id: targetId,
+        name: m.name,
+        openTime: m.openTime,
+        closeTime: m.closeTime,
+        ...(m.apiSlug ? { apiSlug: m.apiSlug } : {})
+      };
+      await marketCol.updateOne(
+        { _id: targetId },
+        { $setOnInsert: marketDoc },
+        { upsert: true }
+      );
+      existing = marketDoc;
+      byId.set(targetId, existing);
+      byName.set(nameKey, existing);
+    }
+
+    for (const r of (m.results || [])) {
+      if (!r || typeof r.date !== "string") continue;
+      const resultDoc = {
+        _id: targetId + "::" + r.date,
+        marketId: targetId,
+        ...r
+      };
+      await resultCol.updateOne(
+        { marketId: targetId, date: r.date },
+        { $setOnInsert: resultDoc },
+        { upsert: true }
+      );
+    }
+  }
+
+  const stateCol = mongoDb.collection("app_state");
+  const allIds = [
+    ...existingMarkets.map(m => String(m._id)),
+    ...legacy.markets.map(m => String(m.id))
+  ];
+  const nextIdFloor = Math.max(
+    Number(legacy.nextId) || 1,
+    1,
+    ...allIds.map(id => {
+      const match = /^market-(\d+)$/.exec(id);
+      return match ? Number(match[1]) + 1 : 1;
+    })
+  );
+
+  await stateCol.updateOne(
+    { _id: "main" },
+    {
+      $max: { nextId: nextIdFloor },
+      $setOnInsert: { _id: "main", logs: legacy.logs || [] }
+    },
+    { upsert: true }
+  );
+
   const [marketDocs, resultDocs, state] = await Promise.all([
     marketCol.find({}).toArray(),
     resultCol.find({}).toArray(),
-    mongoDb.collection("app_state").findOne({ _id: "main" })
+    stateCol.findOne({ _id: "main" })
   ]);
-
-  if (marketDocs.length === 0) {
-    // First MongoDB startup: migrate the existing JSON store without deleting it.
-    const legacy = readStore();
-    cachedStore = normalizeStore(legacy);
-    await persistStoreToMongo(JSON.parse(JSON.stringify(cachedStore)));
-    await mongoWriteQueue;
-    console.log(`MongoDB first-run migration complete: ${legacy.markets.length} market(s).`);
-    return;
-  }
 
   const byMarket = new Map();
   for (const doc of resultDocs) {
@@ -142,16 +200,21 @@ async function initializeDatabase() {
     if (!byMarket.has(String(doc.marketId))) byMarket.set(String(doc.marketId), []);
     byMarket.get(String(doc.marketId)).push(item);
   }
+
   cachedStore = normalizeStore({
     markets: marketDocs.map(doc => ({
-      id: String(doc._id), name: doc.name, openTime: doc.openTime,
-      closeTime: doc.closeTime, ...(doc.apiSlug ? { apiSlug: doc.apiSlug } : {}),
+      id: String(doc._id),
+      name: doc.name,
+      openTime: doc.openTime,
+      closeTime: doc.closeTime,
+      ...(doc.apiSlug ? { apiSlug: doc.apiSlug } : {}),
       results: byMarket.get(String(doc._id)) || []
     })),
-    nextId: Number.isInteger(state?.nextId) ? state.nextId : 1,
-    logs: Array.isArray(state?.logs) ? state.logs : []
+    nextId: Number.isInteger(state?.nextId) ? state.nextId : legacy.nextId,
+    logs: Array.isArray(state?.logs) ? state.logs : (legacy.logs || [])
   });
-  console.log(`MongoDB connected: ${marketDocs.length} market(s), ${resultDocs.length} daily result(s).`);
+
+  console.log("MongoDB additive sync complete: " + marketDocs.length + " market(s), " + resultDocs.length + " daily result(s).");
 }
 
 function logAction(s, action, detail) {

@@ -307,6 +307,10 @@ body.home-page .market-grid .result-line{font-size:clamp(25px,6vw,34px);font-wei
 body.home-page .market-grid .market-action{background:#56329b;color:#fff;border-radius:9px;font-weight:800;padding:8px}
 body.home-page .bottom-nav{position:fixed;z-index:99;bottom:5px;left:5px;right:5px;display:flex;gap:5px;padding:4px;background:#ffd0a1}
 body.home-page .bottom-nav a,body.home-page .bottom-nav button{flex:1;text-align:center;background:#123f9b;color:#fff;border:2px solid white;border-radius:8px;padding:10px 3px;font-weight:900;font-size:12px;text-decoration:none}
+body.home-page .play-matka-float{position:fixed;z-index:120;right:16px;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:9px;min-height:54px;padding:0 21px;border:3px solid #fff;border-radius:999px;background:linear-gradient(135deg,#16a34a,#08752f);color:#fff;font-size:17px;font-weight:1000;text-decoration:none;box-shadow:0 5px 18px #0006,0 0 0 3px #16a34a}
+body.home-page .play-matka-float .play-icon{font-size:23px}
+@media(max-width:420px){body.home-page .play-matka-float{right:12px;bottom:calc(68px + env(safe-area-inset-bottom));min-height:51px;padding:0 17px;font-size:16px}}
+
 @media(max-width:420px){body.home-page .welcome-card{padding:10px 6px}body.home-page .market-grid .market{padding-left:53px;padding-right:53px;min-height:112px}}
 `;
 const ADMIN_CSS = String.raw`
@@ -565,8 +569,20 @@ app.get("/", (req,res) => {
   const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS VIP<br>Fast Market Results !!</div></section>`;
   const intro = `<section class="description-card"><strong>DPBOSS VIP MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
   const count = `<div class="market-count"><b>${s.markets.length}</b> markets listed <span>·</span> <b>${todayResults.length}</b> results published today</div>`;
-  let playMatkaHref=""; try { const u=new URL(String(s.whatsappPlayLink||"")); const phone=u.hostname==="wa.me" ? u.pathname.replace(/^\/+/, "") : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : ""); if(u.protocol==="https:" && /^\d{8,15}$/.test(phone)) { u.searchParams.set("text","Hi, mujhe Matka Play karna hai."); playMatkaHref=u.toString(); } } catch {} const bottom = `<div class="bottom-nav"><a href="/">HOME</a>${playMatkaHref ? `<a href="${esc(playMatkaHref)}" target="_blank" rel="noopener">PLAY MATKA</a>` : `<span style="opacity:.5;pointer-events:none">PLAY MATKA</span>`}<button type="button" onclick="location.reload()">REFRESH</button></div>`;
-  res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + script));
+  let playMatkaHref="";
+  try {
+    const u = new URL(String(s.whatsappPlayLink || ""));
+    const phone = u.hostname === "wa.me" ? u.pathname.replace(/^\/+/, "") : (u.hostname === "api.whatsapp.com" && u.pathname === "/send" ? (u.searchParams.get("phone") || "") : "");
+    if (u.protocol === "https:" && /^\d{8,15}$/.test(phone)) {
+      u.searchParams.set("text", "Hi, mujhe Matka Play karna hai.");
+      playMatkaHref = u.toString();
+    }
+  } catch {}
+  const bottom = '<div class="bottom-nav"><a href="/">HOME</a><button type="button" onclick="location.reload()">REFRESH</button></div>';
+  const playMatkaButton = playMatkaHref
+    ? '<a class="play-matka-float" href="' + esc(playMatkaHref) + '" target="_blank" rel="noopener" aria-label="Play Matka on WhatsApp"><span class="play-icon">💬</span> PLAY MATKA</a>'
+    : '<button class="play-matka-float" type="button" onclick="alert(\'Admin me Personal WhatsApp Link save karein\')"><span class="play-icon">💬</span> PLAY MATKA</button>';
+  res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + playMatkaButton + script));
 });
 
 function chartMarketName(name) {

@@ -38,6 +38,7 @@ let cachedStore = null;
 function normalizeStore(s) {
   if (!Array.isArray(s.markets)) s.markets = [];
   if (!Array.isArray(s.logs)) s.logs = [];
+    s.whatsappPlayLink = String(s.whatsappPlayLink || "");
   if (!Number.isInteger(s.nextId)) s.nextId = 1;
   s.markets.forEach(m => { if (!Array.isArray(m.results)) m.results = []; });
   return s;
@@ -68,7 +69,7 @@ function persistStoreToMongo(snapshot) {
       results.push({ _id: `${m.id}::${r.date}`, marketId: String(m.id), ...r });
     }
   }
-  const state = { _id: "main", nextId: snapshot.nextId, logs: snapshot.logs || [] };
+  const state = { _id: "main", nextId: snapshot.nextId, logs: snapshot.logs || [], whatsappPlayLink: String(snapshot.whatsappPlayLink || "") };
 
   const run = async () => {
     const marketCol = mongoDb.collection("markets");
@@ -230,7 +231,8 @@ async function initializeDatabase() {
       results: byMarket.get(String(doc._id)) || []
     })),
     nextId: Number.isInteger(state?.nextId) ? state.nextId : legacy.nextId,
-    logs: Array.isArray(state?.logs) ? state.logs : (legacy.logs || [])
+    logs: Array.isArray(state?.logs) ? state.logs : (legacy.logs || []),
+    whatsappPlayLink: String(state?.whatsappPlayLink || legacy.whatsappPlayLink || "")
   });
 
   console.log("MongoDB additive sync complete: " + marketDocs.length + " market(s), " + resultDocs.length + " daily result(s).");
@@ -340,7 +342,7 @@ const ADMIN_CSS = String.raw`
 }
 `;
 function page(title, content, admin = false) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><title>${esc(title)} · DPBOSS</title><style>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><title>${esc(title)} · DPBOSS VIP</title><style>
 :root{--bg:#fff7e9;--ink:#171717;--navy:#132d56;--orange:#f58220;--red:#b71922;--line:#e5a24a;--muted:#66584b;--paper:#fffdf8;--green:#176b3a}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;max-width:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}
 header{background:#fff;color:var(--red);text-align:center;padding:14px 10px 10px;border-bottom:3px solid var(--orange)}.brand-link{display:block;color:inherit;text-decoration:none}.brand{font:900 clamp(30px,7vw,46px)/1 Arial,sans-serif;letter-spacing:1px}.tag{font-size:11px;color:#444;margin-top:6px;font-weight:700;letter-spacing:1.5px}
@@ -394,8 +396,11 @@ main{width:100%;min-width:0}
 /* Screenshot-matched DPBOSS mobile homepage */
 body{background:#ffc994}
 header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:7px 9px 5px;padding:16px 8px 13px;box-shadow:0 2px 0 #a80e1d}
-.brand{font-family:Georgia,serif;font-size:clamp(34px,9vw,48px);font-weight:900;letter-spacing:-1.5px;color:#111;text-shadow:none}
-.brand:before{content:'DP';font-family:cursive;font-style:italic;color:#ec078d;font-size:1.18em;margin-right:3px}
+.brand{display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;font-family:Georgia,serif;font-size:clamp(30px,8.5vw,48px);font-weight:900;letter-spacing:-1px;color:#111;text-shadow:none;line-height:1.15}
+.brand-dp{font-family:cursive;font-style:italic;color:#ec078d;font-size:1.12em}
+.brand-boss{color:#111}
+.brand-vip{position:relative;display:inline-block;background:#e21b2b;color:#fff;padding:5px 9px 4px;border-radius:9px;font-size:.72em;font-style:italic;letter-spacing:0}
+.brand-vip:before{content:'👑';position:absolute;top:-.8em;right:-.12em;font-size:.58em;line-height:1}
 .tag{display:none}
 nav{display:none}
 main{max-width:760px;padding:4px 9px calc(76px + env(safe-area-inset-bottom))}
@@ -514,7 +519,7 @@ footer{display:none}
 </style>${admin ? "<style>" + ADMIN_CSS + "</style>" : title === "Market Result" ? "<style>" + HOME_CSS + "</style>" : ""}<script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
-</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand">BOSS</div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
+</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS VIP Home"><div class="brand"><span class="brand-dp">DP</span><span class="brand-boss">BOSS</span><span class="brand-vip">VIP</span></div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS VIP · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
 }
 function resultTable(r) {
   const openAnk = r.openAnk ?? pannaAnk(r.openPanna);
@@ -557,10 +562,10 @@ app.get("/", (req,res) => {
   const board = s.markets.map(m=>marketCard(m)).join("") || '<section class="panel">No markets available. Sign in to Admin and sync the market list.</section>';
   const search = `<section class="market-toolbar"><h2>WORLD ME SABSE FAST RESULT</h2><p>Market-wise latest published results</p><input id="marketSearch" type="search" placeholder="Search market name..." aria-label="Search market"></section>`;
   const script = `<script>document.addEventListener('DOMContentLoaded',()=>{const input=document.getElementById('marketSearch');if(input)input.addEventListener('input',()=>{const q=input.value.toLowerCase();document.querySelectorAll('.market-grid .market').forEach(card=>{card.style.display=card.innerText.toLowerCase().includes(q)?'':'none';});});});</script>`;
-  const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS<br>Fast Market Results !!</div></section>`;
-  const intro = `<section class="description-card"><strong>DPBOSS MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
+  const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS VIP<br>Fast Market Results !!</div></section>`;
+  const intro = `<section class="description-card"><strong>DPBOSS VIP MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
   const count = `<div class="market-count"><b>${s.markets.length}</b> markets listed <span>·</span> <b>${todayResults.length}</b> results published today</div>`;
-  const bottom = `<div class="bottom-nav"><a href="/">HOME</a><a href="/jodi">JODI CHART</a><button type="button" onclick="location.reload()">REFRESH</button></div>`;
+  let playMatkaHref=""; try { const u=new URL(String(s.whatsappPlayLink||"")); const phone=u.hostname==="wa.me" ? u.pathname.replace(/^\/+/, "") : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : ""); if(u.protocol==="https:" && /^\d{8,15}$/.test(phone)) { u.searchParams.set("text","Hi, mujhe Matka Play karna hai."); playMatkaHref=u.toString(); } } catch {} const bottom = `<div class="bottom-nav"><a href="/">HOME</a>${playMatkaHref ? `<a href="${esc(playMatkaHref)}" target="_blank" rel="noopener">PLAY MATKA</a>` : `<span style="opacity:.5;pointer-events:none">PLAY MATKA</span>`}<button type="button" onclick="location.reload()">REFRESH</button></div>`;
   res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + script));
 });
 
@@ -713,11 +718,30 @@ function adminSavedResults(m) {
  return `<h3>Saved Results — Edit Any Date</h3><p class="muted">Change the date’s Open/Close Panna, then press Update Result. The Jodi is recalculated automatically.</p>${results.map(r=>`<form method="post" action="/admin/result" class="panel" style="padding:12px;margin:10px 0;background:#fff9ed"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Date</label><input type="date" name="date" value="${esc(r.date)}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.openPanna||'')}" required></div><div><label>Close Panna</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.closePanna||'')}" required></div></div><p class="muted">Current: ${esc(r.openPanna||'—')} · ${esc(r.jodi||'—')} · ${esc(r.closePanna||'—')} · ${resultIsVisible(r)?'Published':'Unpublished'}</p><button name="action" value="publish">Update Result</button></form>`).join('')}`;
 }
 
+
+app.post("/admin/settings/whatsapp",adminOnly,async(req,res)=>{
+  const raw=String(req.body.whatsappPlayLink||"").trim();
+  let valid=false;
+  try {
+    const u=new URL(raw);
+    const phone=u.hostname==="wa.me"
+      ? u.pathname.replace(/^\/+/, "")
+      : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : "");
+    valid=u.protocol==="https:" && /^\\d{8,15}$/.test(phone);
+  } catch {}
+  if(!valid) return res.status(400).send(page("Invalid WhatsApp Link",'<section class="panel"><h2>Invalid WhatsApp Link</h2><p>Please enter a valid HTTPS personal WhatsApp link, such as https://wa.me/919876543210</p><a href="/admin">Back to Dashboard</a></section>',true));
+  const store=readStore();
+  store.whatsappPlayLink=raw;
+  const saved=await writeStore(store);
+  if(!saved) return res.status(500).send(page("Save Failed",'<section class="panel"><h2>Could not save WhatsApp link</h2><a href="/admin">Back to Dashboard</a></section>',true));
+  res.redirect("/admin");
+});
+
 app.get("/admin",adminOnly,(req,res)=>{
  const s=readStore(), personalMarkets=s.markets.filter(m=>["MAHADEV","MAHADEV NIGHT"].includes(String(m.name||"").trim().toUpperCase())), total=personalMarkets.reduce((n,m)=>n+m.results.length,0), published=personalMarkets.reduce((n,m)=>n+m.results.filter(r=>resultIsVisible(r)).length,0), drafts=total-published;
  const add=`<section class="panel admin-add"><div class="admin-kicker">MARKET SETUP</div><h2>Add a Personal Market</h2><form method="post" action="/admin/market/add"><label>Market name</label><input name="name" required maxlength="60" placeholder="e.g. My New Market"><div class="row"><div><label>Open time</label><input type="time" name="openTime" value="15:00" required></div><div><label>Close time</label><input type="time" name="closeTime" value="18:00" required></div><div style="display:flex;align-items:end"><button style="margin-bottom:12px;width:100%">Add Market</button></div></div></form></section>`;
- const exportPanel=`<section class="panel admin-export"><h2>Download Results</h2><a href="/admin/export/results.csv">Download Excel Sheet (CSV)</a> | <a href="/admin/export/results.pdf" target="_blank">Download PDF</a></section>`; const cards=personalMarkets.map(m=>`<section class="panel admin-market-card"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
- res.send(page("Admin Dashboard",`${flash(req)}<section class="panel admin-overview"><div class="admin-kicker">DPBOSS CONTROL CENTER</div><h2>Dashboard Overview</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${exportPanel}${cards}` ,true));
+ const whatsappPanel=`<section class="panel"><h2>PLAY MATKA — WhatsApp Link</h2><form method="post" action="/admin/settings/whatsapp"><label>Personal WhatsApp Link</label><input type="url" name="whatsappPlayLink" value="${esc(s.whatsappPlayLink || "")}" placeholder="https://wa.me/919876543210" required><p class="muted">Enter your personal WhatsApp link. The Play Matka button will open WhatsApp with a pre-filled message.</p><button>Save WhatsApp Link</button></form></section>`; const exportPanel=`<section class="panel admin-export"><h2>Download Results</h2><a href="/admin/export/results.csv">Download Excel Sheet (CSV)</a> | <a href="/admin/export/results.pdf" target="_blank">Download PDF</a></section>`; const cards=personalMarkets.map(m=>`<section class="panel admin-market-card"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
+ res.send(page("Admin Dashboard",`${flash(req)}<section class="panel admin-overview"><div class="admin-kicker">DPBOSS CONTROL CENTER</div><h2>Dashboard Overview</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${whatsappPanel}${exportPanel}${cards}` ,true));
 });
 
 app.get("/admin/export/results.csv",adminOnly,(req,res)=>{

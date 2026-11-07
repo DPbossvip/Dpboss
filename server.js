@@ -346,7 +346,7 @@ const ADMIN_CSS = String.raw`
 }
 `;
 function page(title, content, admin = false) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><title>${esc(title)} · DPBOSS VIP</title><style>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23fff0df%22/%3E%3Ctext x=%2250%22 y=%2268%22 text-anchor=%22middle%22 font-size=%2262%22 font-weight=%22900%22 font-style=%22italic%22 fill=%22%23df1682%22%3EDP%3C/text%3E%3C/svg%3E"><title>${esc(title)} · DPBOSS VIP</title><style>
 :root{--bg:#fff7e9;--ink:#171717;--navy:#132d56;--orange:#f58220;--red:#b71922;--line:#e5a24a;--muted:#66584b;--paper:#fffdf8;--green:#176b3a}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;max-width:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}
 header{background:#fff;color:var(--red);text-align:center;padding:14px 10px 10px;border-bottom:3px solid var(--orange)}.brand-link{display:block;color:inherit;text-decoration:none}.brand{font:900 clamp(30px,7vw,46px)/1 Arial,sans-serif;letter-spacing:1px}.tag{font-size:11px;color:#444;margin-top:6px;font-weight:700;letter-spacing:1.5px}

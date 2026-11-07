@@ -745,13 +745,28 @@ app.post("/admin/settings/whatsapp",adminOnly,async(req,res)=>{
       : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : "");
     valid=u.protocol==="https:" && /^\d{8,15}$/.test(phone);
   } catch {}
-  if(!valid) return res.status(400).send(page("Invalid WhatsApp Link",'<section class="panel"><h2>Invalid WhatsApp Link</h2><p>Please enter a valid HTTPS personal WhatsApp link, such as https://wa.me/919876543210</p><a href="/admin">Back to Dashboard</a></section>',true));
+  if(!valid) return res.status(400).send(page("Invalid WhatsApp Link",'<section class="panel"><h2>Invalid WhatsApp Link</h2><p>Please enter a valid HTTPS personal WhatsApp link.</p><a href="/admin">Back to Dashboard</a></section>',true));
+
   const store=readStore();
   store.whatsappPlayLink=raw;
-  const saved=await writeStore(store);
-  if(!saved) return res.status(500).send(page("Save Failed",'<section class="panel"><h2>Could not save WhatsApp link</h2><a href="/admin">Back to Dashboard</a></section>',true));
+  try {
+    if(mongoDb) {
+      await mongoDb.collection("app_state").updateOne(
+        { _id: "main" },
+        { $set: { whatsappPlayLink: raw } },
+        { upsert: true }
+      );
+    } else {
+      const saved=await writeStore(store);
+      if(!saved) throw new Error("Local storage save failed");
+    }
+    cachedStore=normalizeStore(store);
+  } catch(err) {
+    console.error("WhatsApp link save failed:",err.message);
+    return res.status(500).send(page("Save Failed",'<section class="panel"><h2>Could not save WhatsApp link</h2><a href="/admin">Back to Dashboard</a></section>',true));
+  }
   res.redirect("/admin");
-});
+});;
 
 app.get("/admin",adminOnly,(req,res)=>{
  const s=readStore(), personalMarkets=s.markets.filter(m=>["MAHADEV","MAHADEV NIGHT"].includes(String(m.name||"").trim().toUpperCase())), total=personalMarkets.reduce((n,m)=>n+m.results.length,0), published=personalMarkets.reduce((n,m)=>n+m.results.filter(r=>resultIsVisible(r)).length,0), drafts=total-published;

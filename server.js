@@ -78,14 +78,20 @@ function persistStoreToMongo(snapshot) {
     if (markets.length) await marketCol.bulkWrite(markets.map(doc => ({
       replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true }
     })), { ordered: true });
-    if (results.length) await resultCol.bulkWrite(results.map(doc => ({
-      replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true }
-    })), { ordered: true });
+    if (results.length) await resultCol.bulkWrite(results.map(doc => {
+      const { _id, ...fields } = doc;
+      return {
+        updateOne: {
+          filter: { marketId: doc.marketId, date: doc.date },
+          update: { $set: fields, $setOnInsert: { _id } },
+          upsert: true
+        }
+      };
+    }), { ordered: true });
     await stateCol.replaceOne({ _id: "main" }, state, { upsert: true });
     const marketIds = markets.map(x => x._id);
-    const resultIds = results.map(x => x._id);
     await marketCol.deleteMany({ _id: { $nin: marketIds } });
-    await resultCol.deleteMany({ _id: { $nin: resultIds } });
+// Keep existing daily result history; do not delete records during sync.
   };
   mongoWriteQueue = mongoWriteQueue.catch(() => {}).then(run);
   return mongoWriteQueue;

@@ -278,11 +278,11 @@ function adminOnly(req, res, next) { if (!req.session.admin) return res.redirect
 function flash(req) { const m = req.session.flash; delete req.session.flash; return m ? `<div class="flash">${esc(m)}</div>` : ""; }
 const HOME_CSS = String.raw`
 body.home-page{background:#ffc994;color:#171717}
-body.home-page header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:8px 10px 10px;padding:17px 8px}
+body.home-page header{background:#edf2ff;border:3px solid #6878c8;border-radius:18px;margin:8px 10px 10px;padding:17px 8px}
 body.home-page .brand{font-size:clamp(38px,10vw,58px);letter-spacing:-2px}
 body.home-page .tag{display:none}
 body.home-page main{max-width:900px;padding:0 10px 75px;margin:8px auto}
-body.home-page .welcome-card,body.home-page .description-card,body.home-page .home-lucky,body.home-page .live-panel,body.home-page .market-toolbar{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:17px;margin:9px 0;padding:14px;box-shadow:0 3px 0 rgba(150,35,35,.12)}
+body.home-page .welcome-card,body.home-page .description-card,body.home-page .home-lucky,body.home-page .live-panel,body.home-page .market-toolbar{background:#edf2ff;border:3px solid #6878c8;border-radius:17px;margin:9px 0;padding:14px;box-shadow:0 3px 0 rgba(150,35,35,.12)}
 body.home-page .welcome-card{min-height:105px;display:flex;align-items:center;justify-content:center;gap:14px;text-align:center}
 body.home-page .welcome-mark{font-size:42px}
 body.home-page .welcome-copy{font-size:clamp(17px,4.5vw,25px);font-weight:900;line-height:1.25}
@@ -297,22 +297,22 @@ body.home-page .lucky-column:last-child{border:0}
 body.home-page .lucky-label{font-size:clamp(17px,4.5vw,24px);font-weight:900;color:#173d78}
 body.home-page .lucky-values{font-size:clamp(23px,6vw,34px);font-weight:900;color:#173d78}
 body.home-page .lucky-values small{display:block;font-size:10px;color:#4c392e;font-weight:600}
-body.home-page .live-panel{border-left:3px solid #ed1b2f;text-align:center}
+body.home-page .live-panel{border-left:3px solid #20a18a;text-align:center}
 body.home-page .live-market{font-size:clamp(20px,5vw,28px);color:#173d78}
 body.home-page .live-result{font-size:clamp(28px,7vw,40px);color:#85205a}
 body.home-page .home-link{display:inline-block;background:#50329b;color:white;border-radius:9px;padding:9px 16px;font-weight:800;text-decoration:none}
 body.home-page .market-toolbar{display:block;text-align:center}
 body.home-page .market-toolbar h2{margin:0 0 8px}
 body.home-page .market-toolbar p{font-weight:700}
-body.home-page .market-toolbar input{max-width:100%;width:100%;min-height:45px;border:2px solid #ed1b2f;border-radius:10px;padding:10px}
-body.home-page .market-grid{border:3px solid #ed1b2f;border-radius:16px;overflow:hidden;gap:0;background:#ffd0a1}
-body.home-page .market-grid .market{border:0;border-bottom:2px solid #ed1b2f;border-radius:0;min-height:125px;padding:15px 65px 12px;background:#ffd0a1}
-body.home-page .market-grid .market:first-child,body.home-page .market-grid .market:nth-child(8n){background:#fff500}
+body.home-page .market-toolbar input{max-width:100%;width:100%;min-height:45px;border:2px solid #8292d5;border-radius:10px;padding:10px}
+body.home-page .market-grid{border:3px solid #6878c8;border-radius:16px;overflow:hidden;gap:0;background:#edf2ff}
+body.home-page .market-grid .market{border:0;border-bottom:2px solid #c4cafa;border-radius:0;min-height:125px;padding:15px 65px 12px;background:#edf2ff}
+body.home-page .market-grid .market:first-child,body.home-page .market-grid .market:nth-child(8n){background:#e5f5f1}
 body.home-page .market-grid .market h2{font-size:clamp(20px,5vw,27px);color:#173d78}
 body.home-page .market-grid .result-line{font-size:clamp(25px,6vw,34px);font-weight:900;color:#84205a}
 body.home-page .market-grid .market-action{background:#56329b;color:#fff;border-radius:9px;font-weight:800;padding:8px}
-body.home-page .bottom-nav{position:fixed;z-index:99;bottom:5px;left:5px;right:5px;display:flex;gap:5px;padding:4px;background:#ffd0a1}
-body.home-page .bottom-nav a,body.home-page .bottom-nav button{flex:1;text-align:center;background:#123f9b;color:#fff;border:2px solid white;border-radius:8px;padding:10px 3px;font-weight:900;font-size:12px;text-decoration:none}
+body.home-page .bottom-nav{position:fixed;z-index:99;bottom:5px;left:5px;right:5px;display:flex;gap:5px;padding:4px;background:#edf2ff}
+body.home-page .bottom-nav a,body.home-page .bottom-nav button{flex:1;text-align:center;background:linear-gradient(110deg,#234b9b,#5368c5);color:#fff;border:2px solid white;border-radius:8px;padding:10px 3px;font-weight:900;font-size:12px;text-decoration:none}
 body.home-page .play-matka-float{position:fixed;z-index:120;right:16px;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:9px;min-height:54px;padding:0 21px;border:3px solid #fff;border-radius:999px;background:linear-gradient(135deg,#16a34a,#08752f);color:#fff;font-size:17px;font-weight:1000;text-decoration:none;box-shadow:0 5px 18px #0006,0 0 0 3px #16a34a}
 body.home-page .play-matka-float .play-icon{font-size:23px}
 @media(max-width:420px){body.home-page .play-matka-float{right:12px;bottom:calc(68px + env(safe-area-inset-bottom));min-height:51px;padding:0 17px;font-size:16px}}

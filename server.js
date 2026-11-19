@@ -746,7 +746,6 @@ app.get("/history", (req,res) => {
 });
 app.get("/login",(req,res)=>{if(req.session.admin)return res.redirect("/admin");res.send(page("Admin Login",`${flash(req)}<section class="panel" style="max-width:440px;margin:auto"><h2>Admin Login</h2><form method="post" action="/login"><label>Username</label><input name="username" autocomplete="username" required maxlength="80"><label>Password</label><input type="password" name="password" autocomplete="current-password" required maxlength="200"><button>Login</button></form></section>`));});
 app.post("/login",(req,res)=>{const ok=String(req.body.username||"")===process.env.ADMIN_USERNAME&&String(req.body.password||"")===process.env.ADMIN_PASSWORD;if(!ok){req.session.flash="Login details did not match.";return res.redirect("/login");}req.session.regenerate(err=>{if(err)return res.status(500).send("Could not start session.");req.session.admin=true;res.redirect("/admin");});});
-function adminOnly(req,res,next){if(!req.session.admin)return res.redirect("/login");next();}
 app.post("/logout",adminOnly,(req,res)=>req.session.destroy(()=>res.redirect("/")));
 
 function adminSavedResults(m) {

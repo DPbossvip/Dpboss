@@ -5,11 +5,13 @@ const helmet = require("helmet");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
+const ANALYTICS_FILE = path.join(DATA_DIR, "analytics.json");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
 
 if (!process.env.SESSION_SECRET || !process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
@@ -21,9 +23,12 @@ if (process.env.ADMIN_PASSWORD.length < 12 || process.env.SESSION_SECRET.length 
   process.exit(1);
 }
 fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(ANALYTICS_FILE)) {
+  fs.writeFileSync(ANALYTICS_FILE, JSON.stringify({ totalVisits: 0, uniqueVisitors: 0, visitors: {} }, null, 2), { mode: 0o600 });
+}
 if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify({
   markets: [
-    { id: "mahadev", name: "KALYAN", openTime: "11:00", closeTime: "18:00", results: [] },
+    { id: "mahadev", name: "KALYAN", openTime: "15:45", closeTime: "17:45", results: [] },
     { id: "main-bazar", name: "MAIN BAZAR", openTime: "21:00", closeTime: "22:00", results: [] }
   ], nextId: 1, logs: []
 }, null, 2), { mode: 0o600 });
@@ -33,25 +38,93 @@ const { MongoClient } = require("mongodb");
 const MONGODB_URI = String(process.env.MONGODB_URI || "").trim();
 let mongoDb = null;
 let mongoWriteQueue = Promise.resolve();
+let storeWriteQueue = Promise.resolve();
 let cachedStore = null;
 
 function normalizeStore(s) {
   if (!Array.isArray(s.markets)) s.markets = [];
   if (!Array.isArray(s.logs)) s.logs = [];
-    s.whatsappPlayLink = String(s.whatsappPlayLink || "");
   if (!Number.isInteger(s.nextId)) s.nextId = 1;
   s.markets.forEach(m => { if (!Array.isArray(m.results)) m.results = []; });
   return s;
 }
 
+function cloneStore(s) {
+  return JSON.parse(JSON.stringify(s));
+}
+
+// Website analytics are stored separately from market/result data so visitor
+// tracking never changes the existing DPBOSS market backup or sync workflow.
+async function recordPageView(visitorId) {
+  const now = new Date().toISOString();
+  if (mongoDb) {
+    const analytics = mongoDb.collection("website_analytics");
+    let isNewVisitor = false;
+    try {
+      const result = await analytics.updateOne(
+        { _id: visitorId },
+        { $setOnInsert: { firstSeen: now }, $set: { lastSeen: now }, $inc: { visits: 1 } },
+        { upsert: true }
+      );
+      isNewVisitor = result.upsertedCount === 1;
+    } catch (err) {
+      // A simultaneous first visit from the same browser can race on _id.
+      if (err.code !== 11000) throw err;
+      await analytics.updateOne({ _id: visitorId }, { $set: { lastSeen: now }, $inc: { visits: 1 } });
+    }
+    await analytics.updateOne(
+      { _id: "totals" },
+      { $inc: { totalVisits: 1, ...(isNewVisitor ? { uniqueVisitors: 1 } : {}) } },
+      { upsert: true }
+    );
+    return;
+  }
+
+  const data = JSON.parse(fs.readFileSync(ANALYTICS_FILE, "utf8"));
+  if (!data.visitors || typeof data.visitors !== "object") data.visitors = {};
+  data.totalVisits = (Number(data.totalVisits) || 0) + 1;
+  if (!data.visitors[visitorId]) {
+    data.visitors[visitorId] = { firstSeen: now, lastSeen: now, visits: 1 };
+    data.uniqueVisitors = (Number(data.uniqueVisitors) || 0) + 1;
+  } else {
+    data.visitors[visitorId].lastSeen = now;
+    data.visitors[visitorId].visits = (Number(data.visitors[visitorId].visits) || 0) + 1;
+  }
+  const tmp = `${ANALYTICS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, ANALYTICS_FILE);
+}
+
+async function getVisitorStats() {
+  if (mongoDb) {
+    const totals = await mongoDb.collection("website_analytics").findOne({ _id: "totals" });
+    return {
+      totalVisits: Number(totals?.totalVisits) || 0,
+      uniqueVisitors: Number(totals?.uniqueVisitors) || 0
+    };
+  }
+  const data = JSON.parse(fs.readFileSync(ANALYTICS_FILE, "utf8"));
+  return {
+    totalVisits: Number(data.totalVisits) || 0,
+    uniqueVisitors: Number(data.uniqueVisitors) || 0
+  };
+}
+
 function readStore() {
-  if (cachedStore) return cachedStore;
+  if (cachedStore) return cloneStore(cachedStore);
   try {
-    return normalizeStore(JSON.parse(fs.readFileSync(DATA_FILE, "utf8")));
+    cachedStore = normalizeStore(JSON.parse(fs.readFileSync(DATA_FILE, "utf8")));
+    return cloneStore(cachedStore);
   } catch (err) {
     console.error(`Unable to read ${DATA_FILE}. The existing file has been left untouched.`, err.message);
     throw new Error("The saved data file could not be read. Check data/store.json before making changes; the app will not replace it automatically.");
   }
+}
+
+async function readStoreForUpdate() {
+  // Ensure a request sees the latest fully committed snapshot before modifying it.
+  await storeWriteQueue.catch(() => {});
+  return readStore();
 }
 
 function persistStoreToMongo(snapshot) {
@@ -69,7 +142,7 @@ function persistStoreToMongo(snapshot) {
       results.push({ _id: `${m.id}::${r.date}`, marketId: String(m.id), ...r });
     }
   }
-  const state = { _id: "main", nextId: snapshot.nextId, logs: snapshot.logs || [], whatsappPlayLink: String(snapshot.whatsappPlayLink || "") };
+  const state = { _id: "main", nextId: snapshot.nextId, logs: snapshot.logs || [] };
 
   const run = async () => {
     const marketCol = mongoDb.collection("markets");
@@ -80,18 +153,25 @@ function persistStoreToMongo(snapshot) {
     })), { ordered: true });
     if (results.length) await resultCol.bulkWrite(results.map(doc => {
       const { _id, ...fields } = doc;
-      return {
-        updateOne: {
-          filter: { marketId: doc.marketId, date: doc.date },
-          update: { $set: fields, $setOnInsert: { _id } },
-          upsert: true
-        }
-      };
+      // Match by the indexed natural key so older ObjectId-backed records update in place.
+      return { updateOne: {
+        filter: { marketId: doc.marketId, date: doc.date },
+        update: { $set: fields, $setOnInsert: { _id } },
+        upsert: true
+      } };
     }), { ordered: true });
     await stateCol.replaceOne({ _id: "main" }, state, { upsert: true });
+
     const marketIds = markets.map(x => x._id);
     await marketCol.deleteMany({ _id: { $nin: marketIds } });
-// Keep existing daily result history; do not delete records during sync.
+
+    // Remove results deleted from the app while preserving existing MongoDB _id values.
+    const keepResultKeys = new Set(results.map(doc => `${doc.marketId}\u0000${doc.date}`));
+    const existingResults = await resultCol.find({}, { projection: { _id: 1, marketId: 1, date: 1 } }).toArray();
+    const staleResultIds = existingResults
+      .filter(doc => doc.marketId != null && !keepResultKeys.has(`${String(doc.marketId)}\u0000${String(doc.date)}`))
+      .map(doc => doc._id);
+    if (staleResultIds.length) await resultCol.deleteMany({ _id: { $in: staleResultIds } });
   };
   mongoWriteQueue = mongoWriteQueue.catch(() => {}).then(run);
   return mongoWriteQueue;
@@ -99,25 +179,27 @@ function persistStoreToMongo(snapshot) {
 
 async function writeStore(s) {
   const normalized = normalizeStore(s);
-  cachedStore = normalized;
-  if (mongoDb) {
-    try {
-      await persistStoreToMongo(JSON.parse(JSON.stringify(normalized)));
-      return true;
-    } catch (err) {
-      console.error("MongoDB persistence failed:", err.message);
-      return false;
+  const snapshot = cloneStore(normalized);
+  const persist = async () => {
+    if (mongoDb) {
+      // Wait for the queued MongoDB write so callers never report success early.
+      await persistStoreToMongo(snapshot);
+    } else {
+      const tmp = `${DATA_FILE}.${process.pid}.${Date.now()}.tmp`;
+      try {
+        fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
+        fs.renameSync(tmp, DATA_FILE);
+      } catch (err) {
+        try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+        throw err;
+      }
     }
-  }
-  const tmp = DATA_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), { mode: 0o600 });
-  try {
-    fs.renameSync(tmp, DATA_FILE);
+    cachedStore = normalized;
     return true;
-  } catch (err) {
-    console.error("Local storage persistence failed:", err.message);
-    return false;
-  }
+  };
+  const pending = storeWriteQueue.catch(() => {}).then(persist);
+  storeWriteQueue = pending;
+  return await pending;
 }
 
 async function initializeDatabase() {
@@ -134,89 +216,21 @@ async function initializeDatabase() {
   await resultCol.createIndex({ marketId: 1, date: 1 }, { unique: true });
   await resultCol.createIndex({ date: -1 });
   await marketCol.createIndex({ name: 1 });
-  // Add missing local markets/results without overwriting existing MongoDB records.
-  const legacy = readStore();
-  // Include deployable market metadata without shipping local result history.
-  const seedPath = path.join(__dirname, "data", "markets-seed.json");
-  if (fs.existsSync(seedPath)) {
-    const seedMarkets = JSON.parse(fs.readFileSync(seedPath, "utf8"));
-    const merged = new Map(legacy.markets.map(m => [String(m.id), m]));
-    for (const m of seedMarkets) {
-      if (!merged.has(String(m.id))) merged.set(String(m.id), { ...m, results: [] });
-    }
-    legacy.markets = Array.from(merged.values());
-  }
-  const existingMarkets = await marketCol.find({}).toArray();
-  const byId = new Map(existingMarkets.map(m => [String(m._id), m]));
-  const byName = new Map(existingMarkets.map(m => [String(m.name || "").trim().toLowerCase(), m]));
-
-  for (const m of legacy.markets) {
-    const localId = String(m.id);
-    const nameKey = String(m.name || "").trim().toLowerCase();
-    let existing = byId.get(localId) || byName.get(nameKey);
-    const targetId = existing ? String(existing._id) : localId;
-
-    if (!existing) {
-      const marketDoc = {
-        _id: targetId,
-        name: m.name,
-        openTime: m.openTime,
-        closeTime: m.closeTime,
-        ...(m.apiSlug ? { apiSlug: m.apiSlug } : {})
-      };
-      await marketCol.updateOne(
-        { _id: targetId },
-        { $setOnInsert: marketDoc },
-        { upsert: true }
-      );
-      existing = marketDoc;
-      byId.set(targetId, existing);
-      byName.set(nameKey, existing);
-    }
-
-    for (const r of (m.results || [])) {
-      if (!r || typeof r.date !== "string") continue;
-      const resultDoc = {
-        _id: targetId + "::" + r.date,
-        marketId: targetId,
-        ...r
-      };
-      await resultCol.updateOne(
-        { marketId: targetId, date: r.date },
-        { $setOnInsert: resultDoc },
-        { upsert: true }
-      );
-    }
-  }
-
-  const stateCol = mongoDb.collection("app_state");
-  const allIds = [
-    ...existingMarkets.map(m => String(m._id)),
-    ...legacy.markets.map(m => String(m.id))
-  ];
-  const nextIdFloor = Math.max(
-    Number(legacy.nextId) || 1,
-    1,
-    ...allIds.map(id => {
-      const match = /^market-(\d+)$/.exec(id);
-      return match ? Number(match[1]) + 1 : 1;
-    })
-  );
-
-  await stateCol.updateOne(
-    { _id: "main" },
-    {
-      $max: { nextId: nextIdFloor },
-      $setOnInsert: { _id: "main", logs: legacy.logs || [] }
-    },
-    { upsert: true }
-  );
-
   const [marketDocs, resultDocs, state] = await Promise.all([
     marketCol.find({}).toArray(),
     resultCol.find({}).toArray(),
-    stateCol.findOne({ _id: "main" })
+    mongoDb.collection("app_state").findOne({ _id: "main" })
   ]);
+
+  if (marketDocs.length === 0) {
+    // First MongoDB startup: migrate the existing JSON store without deleting it.
+    const legacy = readStore();
+    cachedStore = normalizeStore(legacy);
+    await persistStoreToMongo(JSON.parse(JSON.stringify(cachedStore)));
+    await mongoWriteQueue;
+    console.log(`MongoDB first-run migration complete: ${legacy.markets.length} market(s).`);
+    return;
+  }
 
   const byMarket = new Map();
   for (const doc of resultDocs) {
@@ -226,27 +240,40 @@ async function initializeDatabase() {
     if (!byMarket.has(String(doc.marketId))) byMarket.set(String(doc.marketId), []);
     byMarket.get(String(doc.marketId)).push(item);
   }
-
   cachedStore = normalizeStore({
     markets: marketDocs.map(doc => ({
-      id: String(doc._id),
-      name: doc.name,
-      openTime: doc.openTime,
-      closeTime: doc.closeTime,
-      ...(doc.apiSlug ? { apiSlug: doc.apiSlug } : {}),
+      id: String(doc._id), name: doc.name, openTime: doc.openTime,
+      closeTime: doc.closeTime, ...(doc.apiSlug ? { apiSlug: doc.apiSlug } : {}),
       results: byMarket.get(String(doc._id)) || []
     })),
-    nextId: Number.isInteger(state?.nextId) ? state.nextId : legacy.nextId,
-    logs: Array.isArray(state?.logs) ? state.logs : (legacy.logs || []),
-    whatsappPlayLink: String(state?.whatsappPlayLink || legacy.whatsappPlayLink || "")
+    nextId: Number.isInteger(state?.nextId) ? state.nextId : 1,
+    logs: Array.isArray(state?.logs) ? state.logs : []
   });
-
-  console.log("MongoDB additive sync complete: " + marketDocs.length + " market(s), " + resultDocs.length + " daily result(s).");
+  // KALYAN has fixed published timings; keep MongoDB aligned on every startup.
+  const kalyanMarket = cachedStore.markets.find(m => apiSlug(m.apiSlug || m.name) === "kalyan");
+  if (kalyanMarket && (kalyanMarket.openTime !== "15:45" || kalyanMarket.closeTime !== "17:45")) {
+    kalyanMarket.openTime = "15:45";
+    kalyanMarket.closeTime = "17:45";
+    await persistStoreToMongo(JSON.parse(JSON.stringify(cachedStore)));
+    await mongoWriteQueue;
+  }
+  console.log(`MongoDB connected: ${marketDocs.length} market(s), ${resultDocs.length} daily result(s).`);
 }
 
 function logAction(s, action, detail) {
   s.logs.unshift({ at: new Date().toISOString(), action, detail });
   s.logs = s.logs.slice(0, 500);
+}
+async function saveStoreWithFlash(req, store, successMessage, context = "Changes") {
+  try {
+    await writeStore(store);
+    req.session.flash = successMessage;
+    return true;
+  } catch (err) {
+    console.error(`${context} persistence failed:`, err.message);
+    req.session.flash = `SAVE FAILED: ${context.toLowerCase()} were not confirmed as saved. Check server logs.`;
+    return false;
+  }
 }
 function esc(v = "") {
   return String(v).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -276,83 +303,8 @@ function localDateISO(date = new Date()) {
 }
 function adminOnly(req, res, next) { if (!req.session.admin) return res.redirect("/login"); next(); }
 function flash(req) { const m = req.session.flash; delete req.session.flash; return m ? `<div class="flash">${esc(m)}</div>` : ""; }
-const HOME_CSS = String.raw`
-body.home-page{background:#ffc994;color:#171717}
-body.home-page header{background:#edf2ff;border:3px solid #6878c8;border-radius:18px;margin:8px 10px 10px;padding:17px 8px}
-body.home-page .brand{font-size:clamp(38px,10vw,58px);letter-spacing:-2px}
-body.home-page .tag{display:none}
-body.home-page main{max-width:900px;padding:0 10px 75px;margin:8px auto}
-body.home-page .welcome-card,body.home-page .description-card,body.home-page .home-lucky,body.home-page .live-panel,body.home-page .market-toolbar{background:#edf2ff;border:3px solid #6878c8;border-radius:17px;margin:9px 0;padding:14px;box-shadow:0 3px 0 rgba(150,35,35,.12)}
-body.home-page .welcome-card{min-height:105px;display:flex;align-items:center;justify-content:center;gap:14px;text-align:center}
-body.home-page .welcome-mark{font-size:42px}
-body.home-page .welcome-copy{font-size:clamp(17px,4.5vw,25px);font-weight:900;line-height:1.25}
-body.home-page .description-card{text-align:center;font-size:clamp(14px,3.7vw,19px);font-weight:700;line-height:1.35}
-body.home-page .description-card strong{color:#183d70}
-body.home-page .home-lucky{text-align:center}
-body.home-page .home-lucky h2,body.home-page .live-panel>div:first-child,body.home-page .market-toolbar h2{background:#f000a0;color:white;border:2px solid white;border-radius:30px;padding:9px 8px;font-size:clamp(18px,5vw,27px);font-weight:900;margin:0 0 10px}
-body.home-page .home-date{font-size:12px;font-weight:700}
-body.home-page .lucky-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
-body.home-page .lucky-column{padding:8px;border-right:2px solid #ed1b2f}
-body.home-page .lucky-column:last-child{border:0}
-body.home-page .lucky-label{font-size:clamp(17px,4.5vw,24px);font-weight:900;color:#173d78}
-body.home-page .lucky-values{font-size:clamp(23px,6vw,34px);font-weight:900;color:#173d78}
-body.home-page .lucky-values small{display:block;font-size:10px;color:#4c392e;font-weight:600}
-body.home-page .live-panel{border-left:3px solid #20a18a;text-align:center}
-body.home-page .live-market{font-size:clamp(20px,5vw,28px);color:#173d78}
-body.home-page .live-result{font-size:clamp(28px,7vw,40px);color:#85205a}
-body.home-page .home-link{display:inline-block;background:#50329b;color:white;border-radius:9px;padding:9px 16px;font-weight:800;text-decoration:none}
-body.home-page .market-toolbar{display:block;text-align:center}
-body.home-page .market-toolbar h2{margin:0 0 8px}
-body.home-page .market-toolbar p{font-weight:700}
-body.home-page .market-toolbar input{max-width:100%;width:100%;min-height:45px;border:2px solid #8292d5;border-radius:10px;padding:10px}
-body.home-page .market-grid{border:3px solid #6878c8;border-radius:16px;overflow:hidden;gap:0;background:#edf2ff}
-body.home-page .market-grid .market{border:0;border-bottom:2px solid #c4cafa;border-radius:0;min-height:125px;padding:15px 65px 12px;background:#edf2ff}
-body.home-page .market-grid .market:first-child,body.home-page .market-grid .market:nth-child(8n){background:#e5f5f1}
-body.home-page .market-grid .market h2{font-size:clamp(20px,5vw,27px);color:#173d78}
-body.home-page .market-grid .result-line{font-size:clamp(25px,6vw,34px);font-weight:900;color:#84205a}
-body.home-page .market-grid .market-action{background:#56329b;color:#fff;border-radius:9px;font-weight:800;padding:8px}
-body.home-page .bottom-nav{position:fixed;z-index:99;bottom:5px;left:5px;right:5px;display:flex;gap:5px;padding:4px;background:#edf2ff}
-body.home-page .bottom-nav a,body.home-page .bottom-nav button{flex:1;text-align:center;background:linear-gradient(110deg,#234b9b,#5368c5);color:#fff;border:2px solid white;border-radius:8px;padding:10px 3px;font-weight:900;font-size:12px;text-decoration:none}
-body.home-page .play-matka-float{position:fixed;z-index:120;right:16px;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;gap:9px;min-height:54px;padding:0 21px;border:3px solid #fff;border-radius:999px;background:linear-gradient(135deg,#16a34a,#08752f);color:#fff;font-size:17px;font-weight:1000;text-decoration:none;box-shadow:0 5px 18px #0006,0 0 0 3px #16a34a}
-body.home-page .play-matka-float .play-icon{font-size:23px}
-@media(max-width:420px){body.home-page .play-matka-float{right:12px;bottom:calc(68px + env(safe-area-inset-bottom));min-height:51px;padding:0 17px;font-size:16px}}
-
-@media(max-width:420px){body.home-page .welcome-card{padding:10px 6px}body.home-page .market-grid .market{padding-left:53px;padding-right:53px;min-height:112px}}
-`;
-const ADMIN_CSS = String.raw`
-.admin-page{background:#f3f6fb;color:#17243a}
-.admin-page main{max-width:1100px;margin:24px auto;padding:0 14px}
-.admin-page .panel{background:#fff;border:1px solid #e1e8f0;border-radius:16px;padding:20px;margin:0 0 18px;box-shadow:0 5px 18px rgba(25,45,75,.06)}
-.admin-page h2{font-size:22px;color:#172b4d;margin:5px 0 16px}
-.admin-page h3{font-size:17px;color:#263d5b}
-.admin-page .admin-kicker{font-size:11px;font-weight:800;letter-spacing:1.5px;color:#3478c8;margin-bottom:8px}
-.admin-page .admin-overview{background:linear-gradient(120deg,#142c4d,#245b91);color:#fff}
-.admin-page .admin-overview h2{color:#fff}
-.admin-page .admin-overview .admin-kicker{color:#b9d9ff}
-.admin-page .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.admin-page .stat{background:#f4f7fb;border:1px solid #e4ebf3;border-radius:12px;padding:14px}
-.admin-page .admin-overview .stat{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.18);color:#fff}
-.admin-page .admin-overview .stat strong{color:#fff}
-.admin-page label{display:block;font-weight:700;color:#354966;margin:12px 0 6px}
-.admin-page input,.admin-page select{width:100%;min-height:46px;border:1px solid #ccd7e5;border-radius:10px;padding:10px 12px;background:#fff;color:#17243a}
-.admin-page button{min-height:46px;border:0;border-radius:10px;padding:11px 18px;background:#2168ad;color:#fff;font-weight:750;cursor:pointer;margin:6px 5px 6px 0}
-.admin-page button:hover{filter:brightness(.94)}
-.admin-page button.danger{background:#b93845}
-.admin-page .row{gap:12px}
-.admin-page .admin-market-card{border-top:4px solid #3478c8}
-.admin-page .admin-market-card hr{border-color:#e5ebf2!important}
-.admin-page .muted{color:#687b92}
-@media(max-width:650px){
- .admin-page main{margin:14px auto;padding:0 10px}
- .admin-page .panel{padding:15px;border-radius:13px}
- .admin-page .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
- .admin-page .row{display:flex;flex-direction:column;gap:4px}
- .admin-page button{width:100%;margin:5px 0}
- .admin-page h2{font-size:20px}
-}
-`;
 function page(title, content, admin = false) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%23fff0df%22/%3E%3Ctext x=%2250%22 y=%2268%22 text-anchor=%22middle%22 font-size=%2262%22 font-weight=%22900%22 font-style=%22italic%22 fill=%22%23df1682%22%3EDP%3C/text%3E%3C/svg%3E"><title>${esc(title)} · DPBOSS VIP</title><style>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#17120b"><title>${esc(title)} · DPBOSS</title><style>
 :root{--bg:#fff7e9;--ink:#171717;--navy:#132d56;--orange:#f58220;--red:#b71922;--line:#e5a24a;--muted:#66584b;--paper:#fffdf8;--green:#176b3a}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;max-width:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:Arial,Helvetica,sans-serif}
 header{background:#fff;color:var(--red);text-align:center;padding:14px 10px 10px;border-bottom:3px solid var(--orange)}.brand-link{display:block;color:inherit;text-decoration:none}.brand{font:900 clamp(30px,7vw,46px)/1 Arial,sans-serif;letter-spacing:1px}.tag{font-size:11px;color:#444;margin-top:6px;font-weight:700;letter-spacing:1.5px}
@@ -406,11 +358,9 @@ main{width:100%;min-width:0}
 /* Screenshot-matched DPBOSS mobile homepage */
 body{background:#ffc994}
 header{background:#ffd0a1;border:3px solid #ed1b2f;border-radius:18px;margin:7px 9px 5px;padding:16px 8px 13px;box-shadow:0 2px 0 #a80e1d}
-.brand{display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;font-family:Georgia,serif;font-size:clamp(30px,8.5vw,48px);font-weight:900;letter-spacing:-1px;color:#111;text-shadow:none;line-height:1.15}
-.brand-dp{font-family:cursive;font-style:italic;color:#ec078d;font-size:1.12em}
-.brand-boss{color:#111}
-.brand-vip{position:relative;display:inline-block;background:#e21b2b;color:#fff;padding:5px 9px 4px;border-radius:9px;font-size:.72em;font-style:italic;letter-spacing:0}
-.brand-vip:before{content:'👑';position:absolute;top:-.8em;right:-.12em;font-size:.58em;line-height:1}
+.brand{display:inline-flex;align-items:center;justify-content:center;gap:3px;font-family:Georgia,serif;font-size:clamp(32px,8.5vw,46px);font-weight:900;letter-spacing:-1.5px;color:#111;text-shadow:none;white-space:nowrap}
+.brand-dp{font-family:cursive;font-style:italic;font-size:1.3em;line-height:.9;color:#ec078d;font-weight:900}
+.brand-name{font-size:1em;color:#111;letter-spacing:-1.2px}
 .tag{display:none}
 nav{display:none}
 main{max-width:760px;padding:4px 9px calc(76px + env(safe-area-inset-bottom))}
@@ -526,10 +476,11 @@ footer{display:none}
  .panel-cell .left-digit,.panel-cell .right-digit{font-size:11px}.panel-cell .middle-jodi{font-size:16px}
  .panel-reference-table th{font-size:11px}}
 
-</style>${admin ? "<style>" + ADMIN_CSS + "</style>" : title === "Market Result" ? "<style>" + HOME_CSS + "</style>" : ""}<script>
+.market-grid .market.result-time-active{outline:3px solid #198754;outline-offset:-3px;position:relative}
+</style><script>
 function ank(p){if(!/^\\d{3}$/.test(p))return "—";return String([...p].reduce((a,d)=>a+Number(d),0)%10)}
 function updatePreview(form){const o=form.querySelector('[name="openPanna"]').value,c=form.querySelector('[name="closePanna"]').value;const oa=ank(o),ca=ank(c);const open=form.querySelector('[data-preview="open"]'),jodi=form.querySelector('[data-preview="jodi"]'),close=form.querySelector('[data-preview="close"]');if(open)open.textContent="Open Ank: "+oa;if(jodi)jodi.textContent="Jodi: "+(oa!=="—"&&ca!=="—"?oa+ca:"—");if(close)close.textContent="Close Ank: "+ca}
-</script></head><body${admin ? ' class="admin-page"' : title === "Market Result" ? ' class="home-page"' : ""}><header><a class="brand-link" href="/" aria-label="DPBOSS VIP Home"><div class="brand"><span class="brand-dp">DP</span><span class="brand-boss">BOSS</span><span class="brand-vip">VIP</span></div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS VIP · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
+</script></head><body><header><a class="brand-link" href="/" aria-label="DPBOSS Home"><div class="brand"><span class="brand-dp">DP</span><span class="brand-name">BOSSCO.COM</span></div><div class="tag">FAST MARKET RESULT & CHART</div></a></header><nav><a href="/">HOME</a>${admin ? '<a href="/admin">Dashboard</a><a href="/admin/api">API Sync</a><a href="/admin/logs">Change Log</a><a href="/admin/backup">Backup</a><a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a><form method="post" action="/logout" class="inline"><button style="padding:5px 9px">Logout</button></form>' : '<a href="/jodi">JODI CHART</a><a href="/panel">PANEL CHART</a><a href="/history">HISTORY</a>'}</nav><main>${content}</main><footer>DPBOSS · Market results and charts · <a href="/login" style="color:inherit">Admin Login</a></footer></body></html>`;
 }
 function resultTable(r) {
   const openAnk = r.openAnk ?? pannaAnk(r.openPanna);
@@ -544,7 +495,7 @@ function marketCard(m, history = false, query = "") {
   if (!history) {
     const isHighlight = /karnataka|rajan morning/i.test(m.name);
     const result = latest ? (resultIsComplete(latest) ? `${latest.openPanna}-${resultJodi(latest)}-${latest.closePanna}` : (openIsPublished(latest) ? `${latest.openPanna}-${pannaAnk(latest.openPanna)}-…` : `…-…-${latest.closePanna}`)) : "Result Pending";
-    return `<section class="market ${isHighlight ? "highlight" : ""}"><a class="market-action left" href="/jodi?market=${encodeURIComponent(m.id)}">Jodi</a><a class="market-action right" href="/panel?market=${encodeURIComponent(m.id)}">Panel</a><h2>${esc(chartMarketName(m.name))}</h2><div class="result-line">${esc(result)}</div><div class="market-times"><span>${esc(formatTime(m.openTime))}</span><span>${esc(formatTime(m.closeTime))}</span></div>${latest ? `<div class="muted" style="font-size:10px;margin-top:3px">${esc(latest.date)}</div>` : `<div class="empty-result">Result will be available soon</div>`}</section>`;
+    return `<section class="market ${isHighlight ? "highlight" : ""}" data-open-time="${esc(m.openTime)}" data-close-time="${esc(m.closeTime)}"><a class="market-action left" href="/jodi?market=${encodeURIComponent(m.id)}">Jodi</a><a class="market-action right" href="/panel?market=${encodeURIComponent(m.id)}">Panel</a><h2>${esc(chartMarketName(m.name))}</h2><div class="result-line">${esc(result)}</div><div class="market-times"><span>${esc(formatTime(m.openTime))}</span><span>${esc(formatTime(m.closeTime))}</span></div>${latest ? `<div class="muted" style="font-size:10px;margin-top:3px">${esc(latest.date)}</div>` : `<div class="empty-result">Result will be available soon</div>`}</section>`;
   }
   return `<section class="market"><h2>${esc(chartMarketName(m.name))}</h2><div class="meta"><span>Open: <b>${esc(m.openTime)}</b></span><span>Close: <b>${esc(m.closeTime)}</b></span></div>${rows.length ? `<div class="table-wrap"><table class="history-table"><thead><tr><th>Date</th><th>Open Panna</th><th>Open Ank</th><th>Jodi</th><th>Close Panna</th><th>Close Ank</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.date)}</td><td class="num">${esc(openIsPublished(r) ? r.openPanna : "—")}</td><td class="num">${esc(openIsPublished(r) ? (r.openAnk ?? pannaAnk(r.openPanna)) : "—")}</td><td class="num">${esc(validJodi(String(r.jodi || "")) ? String(r.jodi) : (resultIsComplete(r) ? resultJodi(r) : "—"))}</td><td class="num">${esc(closeIsPublished(r) ? r.closePanna : "—")}</td><td class="num">${esc(closeIsPublished(r) ? (r.closeAnk ?? pannaAnk(r.closePanna)) : "—")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No matching published results.</p>'}</section>`;
 }
@@ -557,44 +508,102 @@ app.use(express.urlencoded({ extended: false, limit: "3mb" }));
 app.use(session({ name:"dpboss.sid", secret:process.env.SESSION_SECRET, resave:false, saveUninitialized:false,
   cookie:{ httpOnly:true, sameSite:"strict", secure: process.env.NODE_ENV === "production", maxAge:2*60*60*1000 } }));
 
+// Simple secret admin entry point. Public /admin and /login URLs stay hidden.
+const ADMIN_SECRET_PATH = "/control/jack";
+app.use((req, res, next) => {
+  const originalPath = req.path;
+  if (originalPath === "/admin" || originalPath.startsWith("/admin/") || originalPath === "/login") {
+    return res.status(404).send("Not Found");
+  }
+  if (originalPath === ADMIN_SECRET_PATH + "/login") {
+    req.url = "/login" + req.url.slice((ADMIN_SECRET_PATH + "/login").length);
+  } else if (originalPath === ADMIN_SECRET_PATH || originalPath.startsWith(ADMIN_SECRET_PATH + "/")) {
+    req.url = "/admin" + req.url.slice(ADMIN_SECRET_PATH.length);
+  } else {
+    return next();
+  }
+  const originalSend = res.send.bind(res);
+  res.send = function(body) {
+    if (typeof body === "string") body = body.replaceAll("/admin", ADMIN_SECRET_PATH).replaceAll("/login", ADMIN_SECRET_PATH + "/login");
+    return originalSend(body);
+  };
+  const originalRedirect = res.redirect.bind(res);
+  res.redirect = function(status, url) {
+    if (typeof status === "string") { url = status; status = 302; }
+    if (typeof url === "string") {
+      if (url === "/login") url = ADMIN_SECRET_PATH + "/login";
+      else if (url === "/admin" || url.startsWith("/admin/")) url = ADMIN_SECRET_PATH + url.slice(6);
+    }
+    return originalRedirect(status, url);
+  };
+  next();
+});
+const loginAttempts = new Map();
+app.use((req, res, next) => {
+  if (req.method !== "POST" || req.path !== "/login") return next();
+  const key = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = loginAttempts.get(key) || { count: 0, until: now + 15 * 60 * 1000 };
+  if (now > entry.until) { entry.count = 0; entry.until = now + 15 * 60 * 1000; }
+  if (entry.count >= 8) return res.status(429).send("Too many login attempts. Try again in 15 minutes.");
+  entry.count++;
+  loginAttempts.set(key, entry);
+  next();
+});
+
+
+// Count public page views only. A persistent first-party cookie identifies a
+// browser for unique-visitor counting; admin and login pages are excluded.
+const TRACKED_PUBLIC_PAGES = new Set(["/", "/jodi", "/panel", "/five-year-chart", "/history"]);
+app.use((req, res, next) => {
+  if (req.method !== "GET" || !TRACKED_PUBLIC_PAGES.has(req.path)) return next();
+  const cookies = String(req.headers.cookie || "");
+  const match = cookies.match(/(?:^|;\\s*)dpboss\\.visitor=([a-f0-9-]{36})(?:;|$)/i);
+  const visitorId = match ? match[1] : crypto.randomUUID();
+  if (!match) {
+    res.cookie("dpboss.visitor", visitorId, {
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production"
+    });
+  }
+  recordPageView(visitorId).catch(err => console.error("Website analytics save failed:", err.message));
+  next();
+});
+
 app.get("/", (req,res) => {
   const s = readStore();
   const today = localDateISO();
   const allResults = s.markets.flatMap(m => m.results.filter(r => resultIsVisible(r) && validDate(r.date) && r.date <= today).map(r => ({...r, marketName:m.name, marketId:m.id})));
   const todayResults = allResults.filter(r => r.date === today).sort((a,b) => a.marketName.localeCompare(b.marketName));
-  const latest = [...allResults].sort((a,b) => b.date.localeCompare(a.date))[0];
+  const publishedTime = (result) => {
+    const market = s.markets.find(item => String(item.id) === String(result.marketId));
+    const time = closeIsPublished(result) ? market?.closeTime : market?.openTime;
+    if (!validTime(time)) return -1;
+    const [hours, minutes] = time.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  // Prefer the latest scheduled market result for today; otherwise show the newest available date.
+  const latest = [...allResults].sort((a,b) =>
+    b.date.localeCompare(a.date) ||
+    (b.date === today ? publishedTime(b) - publishedTime(a) : 0) ||
+    String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
+  )[0];
   const dateLabel = new Intl.DateTimeFormat("en-IN", { timeZone:"Asia/Kolkata", day:"2-digit", month:"long", year:"numeric" }).format(new Date());
   const completeToday = todayResults.filter(resultIsComplete);
   const openAnks = [...new Set(completeToday.map(r => pannaAnk(r.openPanna)))];
   const closeAnks = [...new Set(completeToday.map(r => pannaAnk(r.closePanna)))];
   const lucky = `<section class="home-lucky"><h2>✨ Today Lucky Number ✨</h2><p class="home-date">${esc(dateLabel)} · Published results only</p><div class="lucky-grid"><div class="lucky-column"><div class="lucky-label">Golden Ank</div><div class="lucky-values">${openAnks.length ? esc(openAnks.join(" - ")) : "—"}<small>From today's published open results</small></div></div><div class="lucky-column"><div class="lucky-label">Final Ank</div><div class="lucky-values">${closeAnks.length ? esc(closeAnks.join(" - ")) : "—"}<small>From today's published close results</small></div></div></div></section>`;
-  const latestBlock = latest ? `<section class="live-panel"><div><span class="live-dot"></span> LIVE RESULT</div><div class="live-market">${esc(chartMarketName(latest.marketName))}</div><div class="live-result">${resultIsComplete(latest) ? `${esc(latest.openPanna)} - ${esc(resultJodi(latest))} - ${esc(latest.closePanna)}` : (openIsPublished(latest) ? `${esc(latest.openPanna)} - ${esc(pannaAnk(latest.openPanna))} - …` : `… - … - ${esc(latest.closePanna)}`)}</div><div class="live-meta">${esc(shortDate(latest.date))} · ${["sattaapi", "matkaapi"].includes(latest.source) ? "API update" : "Published result"}</div><a class="home-link" href="/history?market=${encodeURIComponent(latest.marketId)}&q=${encodeURIComponent(latest.date)}">VIEW HISTORY</a></section>` : `<section class="live-panel"><div>LIVE RESULT</div><div class="live-market">Results will appear here</div><div class="live-meta">No published results available yet</div><a class="home-link" href="/history">VIEW HISTORY</a></section>`;
-  const boardMarkets = [...s.markets];
-  const mahadevIndex = boardMarkets.findIndex(m => String(m.name || "").trim().toUpperCase() === "MAHADEV");
-  if (mahadevIndex >= 0) {
-    const [mahadevMarket] = boardMarkets.splice(mahadevIndex, 1);
-    boardMarkets.splice(Math.max(0, boardMarkets.length - 9), 0, mahadevMarket);
-  }
-  const board = boardMarkets.map(m=>marketCard(m)).join("") || '<section class="panel">No markets available. Sign in to Admin and sync the market list.</section>';
+  const latestBlock = latest ? `<section class="live-panel"><div><span class="live-dot"></span> LIVE RESULT</div><div class="live-market">${esc(chartMarketName(latest.marketName))}</div><div class="live-result">${resultIsComplete(latest) ? `${esc(latest.openPanna)} - ${esc(resultJodi(latest))} - ${esc(latest.closePanna)}` : (openIsPublished(latest) ? `${esc(latest.openPanna)} - ${esc(pannaAnk(latest.openPanna))} - …` : `… - … - ${esc(latest.closePanna)}`)}</div><div class="live-meta">${esc(shortDate(latest.date))}</div><a class="home-link" href="/history?market=${encodeURIComponent(latest.marketId)}&q=${encodeURIComponent(latest.date)}">VIEW HISTORY</a></section>` : `<section class="live-panel"><div>LIVE RESULT</div><div class="live-market">Results will appear here</div><div class="live-meta">No published results available yet</div><a class="home-link" href="/history">VIEW HISTORY</a></section>`;
+  const board = s.markets.map(m=>marketCard(m)).join("") || '<section class="panel">No markets available. Sign in to Admin and sync the market list.</section>';
   const search = `<section class="market-toolbar"><h2>WORLD ME SABSE FAST RESULT</h2><p>Market-wise latest published results</p><input id="marketSearch" type="search" placeholder="Search market name..." aria-label="Search market"></section>`;
-  const script = `<script>document.addEventListener('DOMContentLoaded',()=>{const input=document.getElementById('marketSearch');if(input)input.addEventListener('input',()=>{const q=input.value.toLowerCase();document.querySelectorAll('.market-grid .market').forEach(card=>{card.style.display=card.innerText.toLowerCase().includes(q)?'':'none';});});});</script>`;
-  const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS VIP<br>Fast Market Results !!</div></section>`;
-  const intro = `<section class="description-card"><strong>DPBOSS VIP MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
+  const script = `<script>document.addEventListener('DOMContentLoaded',()=>{const input=document.getElementById('marketSearch');if(input)input.addEventListener('input',()=>{const q=input.value.toLowerCase();document.querySelectorAll('.market-grid .market').forEach(card=>{card.style.display=card.innerText.toLowerCase().includes(q)?'':'none';});});const grid=document.querySelector('.market-grid');if(!grid)return;const cards=[...grid.querySelectorAll('.market')].map((el,index)=>({el,index}));const getIndiaMinutes=()=>{const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());const hour=Number(parts.find(p=>p.type==='hour').value);const minute=Number(parts.find(p=>p.type==='minute').value);return hour*60+minute;};const nearTime=(value,now)=>{if(!/^\d{2}:\d{2}$/.test(value||''))return false;const [h,m]=value.split(':').map(Number);if(h>23||m>59)return false;const scheduled=h*60+m;const diff=Math.abs(now-scheduled);return Math.min(diff,1440-diff)<=5;};const reorder=()=>{const now=getIndiaMinutes();const ranked=cards.map(item=>({...item,active:nearTime(item.el.dataset.openTime,now)||nearTime(item.el.dataset.closeTime,now)})).sort((a,b)=>Number(b.active)-Number(a.active)||a.index-b.index);ranked.forEach(item=>{item.el.classList.toggle('result-time-active',item.active);grid.appendChild(item.el);});};reorder();setInterval(reorder,15000);});</script>`;
+  const welcome = `<section class="welcome-card"><div class="welcome-mark" aria-hidden="true">🏵️</div><div class="welcome-copy">!! Welcome to DPBOSS<br>Fast Market Results !!</div></section>`;
+  const intro = `<section class="description-card"><strong>DPBOSS MARKET RESULT</strong><br>Latest market-wise published results, Jodi charts, Panel charts and date-wise history — all in one place.</section>`;
   const count = `<div class="market-count"><b>${s.markets.length}</b> markets listed <span>·</span> <b>${todayResults.length}</b> results published today</div>`;
-  let playMatkaHref="";
-  try {
-    const u = new URL(String(s.whatsappPlayLink || ""));
-    const phone = u.hostname === "wa.me" ? u.pathname.replace(/^\/+/, "") : (u.hostname === "api.whatsapp.com" && u.pathname === "/send" ? (u.searchParams.get("phone") || "") : "");
-    if (u.protocol === "https:" && /^\d{8,15}$/.test(phone)) {
-      u.searchParams.set("text", "Hi, mujhe Matka Play karna hai.");
-      playMatkaHref = u.toString();
-    }
-  } catch {}
-  const bottom = '<div class="bottom-nav"><a href="/">HOME</a><button type="button" onclick="location.reload()">REFRESH</button></div>';
-  const playMatkaButton = playMatkaHref
-    ? '<a class="play-matka-float" href="' + esc(playMatkaHref) + '" target="_blank" rel="noopener" aria-label="Play Matka on WhatsApp"><span class="play-icon">💬</span> PLAY MATKA</a>'
-    : '<button class="play-matka-float" type="button" disabled aria-label="Play Matka on WhatsApp"><span class="play-icon">💬</span> PLAY MATKA</button>';
-  res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + playMatkaButton + script));
+  const bottom = `<div class="bottom-nav"><a href="/">HOME</a><a href="/jodi">JODI CHART</a><button type="button" onclick="location.reload()">REFRESH</button></div>`;
+  res.send(page("Market Result", welcome + intro + lucky + latestBlock + search + `<div class="market-grid">${board}</div>` + bottom + script));
 });
 
 function chartMarketName(name) {
@@ -743,71 +752,62 @@ app.post("/logout",adminOnly,(req,res)=>req.session.destroy(()=>res.redirect("/"
 function adminSavedResults(m) {
  const results=[...m.results].filter(r=>validDate(r.date)).sort((a,b)=>b.date.localeCompare(a.date));
  if(!results.length) return '<p class="muted">No saved results for this market yet.</p>';
- return `<h3>Saved Results — Edit Any Date</h3><p class="muted">Change the date’s Open/Close Panna, then press Update Result. The Jodi is recalculated automatically.</p>${results.map(r=>`<form method="post" action="/admin/result" class="panel" style="padding:12px;margin:10px 0;background:#fff9ed"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Date</label><input type="date" name="date" value="${esc(r.date)}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.openPanna||'')}" required></div><div><label>Close Panna</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.closePanna||'')}" required></div></div><p class="muted">Current: ${esc(r.openPanna||'—')} · ${esc(r.jodi||'—')} · ${esc(r.closePanna||'—')} · ${resultIsVisible(r)?'Published':'Unpublished'}</p><button name="action" value="publish">Update Result</button></form><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><form method="post" action="/admin/result/toggle" onsubmit="return confirm('Change publish status for this result?')"><input type="hidden" name="marketId" value="${esc(m.id)}"><input type="hidden" name="date" value="${esc(r.date)}"><button>${resultIsVisible(r)?'Unpublish':'Publish'}</button></form><form method="post" action="/admin/result/delete" onsubmit="return confirm('Permanently delete this result and its saved history?')"><input type="hidden" name="marketId" value="${esc(m.id)}"><input type="hidden" name="date" value="${esc(r.date)}"><button class="danger">Delete Result</button></form></div>`).join('')}`;
+ return `<details class="panel" style="margin-top:14px"><summary style="cursor:pointer;font-weight:700;padding:6px 0">Saved Results — Edit Any Date (${results.length})</summary><p class="muted">Open this section only when you need to edit, publish, or delete an older date.</p>${results.map(r=>`<section class="panel" style="padding:12px;margin:10px 0;background:#fff9ed"><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Date</label><input type="date" name="date" value="${esc(r.date)}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.openPanna||'')}"></div><div><label>Close Panna</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" value="${esc(r.closePanna||'')}"></div></div><p class="muted">Current: ${esc(r.openPanna||'—')} · ${esc(r.jodi||'—')} · ${esc(r.closePanna||'—')} · ${resultIsVisible(r)?'Published':'Unpublished'}</p><button name="action" value="publish">Update Result</button></form><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><form method="post" action="/admin/result/toggle" onsubmit="return confirm('Change publish status for this result?')"><input type="hidden" name="marketId" value="${esc(m.id)}"><input type="hidden" name="date" value="${esc(r.date)}"><button>${resultIsVisible(r)?'Unpublish':'Publish'}</button></form><form method="post" action="/admin/result/delete" onsubmit="return confirm('Permanently delete this result and its saved history?')"><input type="hidden" name="marketId" value="${esc(m.id)}"><input type="hidden" name="date" value="${esc(r.date)}"><button class="danger">Delete Result</button></form></div></section>`).join('')}</details>`;
 }
 
-
-app.post("/admin/settings/whatsapp",adminOnly,async(req,res)=>{
-  const raw=String(req.body.whatsappPlayLink||"").trim();
-  let valid=false;
-  try {
-    const u=new URL(raw);
-    const phone=u.hostname==="wa.me"
-      ? u.pathname.replace(/^\/+/, "")
-      : (u.hostname==="api.whatsapp.com" && u.pathname==="/send" ? (u.searchParams.get("phone")||"") : "");
-    valid=u.protocol==="https:" && /^\d{8,15}$/.test(phone);
-  } catch {}
-  if(!valid) return res.status(400).send(page("Invalid WhatsApp Link",'<section class="panel"><h2>Invalid WhatsApp Link</h2><p>Please enter a valid HTTPS personal WhatsApp link.</p><a href="/admin">Back to Dashboard</a></section>',true));
-
-  const store=readStore();
-  store.whatsappPlayLink=raw;
-  try {
-    if(mongoDb) {
-      await mongoDb.collection("app_state").updateOne(
-        { _id: "main" },
-        { $set: { whatsappPlayLink: raw } },
-        { upsert: true }
-      );
-    } else {
-      const saved=await writeStore(store);
-      if(!saved) throw new Error("Local storage save failed");
-    }
-    cachedStore=normalizeStore(store);
-  } catch(err) {
-    console.error("WhatsApp link save failed:",err.message);
-    return res.status(500).send(page("Save Failed",'<section class="panel"><h2>Could not save WhatsApp link</h2><a href="/admin">Back to Dashboard</a></section>',true));
+function isManualMarket(m) {
+  const slug = apiSlug(m?.name || "");
+  return slug === "mahadev" || slug === "mahadevnight";
+}
+function manualOnly(req, res, next) {
+  const store = readStore();
+  const id = String(req.body.marketId || req.body.id || "");
+  const market = store.markets.find(m => String(m.id) === id);
+  if (!market || !isManualMarket(market)) {
+    req.session.flash = "Only MAHADEV and MAHADEV NIGHT can be managed manually. Other markets are controlled by SattaAPI.";
+    return res.redirect("/admin");
   }
-  res.redirect("/admin");
-});;
+  req.manualMarketId = id;
+  next();
+}
 
-app.get("/admin",adminOnly,(req,res)=>{
- const s=readStore(), personalMarkets=s.markets.filter(m=>["MAHADEV","MAHADEV NIGHT"].includes(String(m.name||"").trim().toUpperCase())), total=personalMarkets.reduce((n,m)=>n+m.results.length,0), published=personalMarkets.reduce((n,m)=>n+m.results.filter(r=>resultIsVisible(r)).length,0), drafts=total-published;
- const add=`<section class="panel admin-add"><div class="admin-kicker">MARKET SETUP</div><h2>Add a Personal Market</h2><form method="post" action="/admin/market/add"><label>Market name</label><input name="name" required maxlength="60" placeholder="e.g. My New Market"><div class="row"><div><label>Open time</label><input type="time" name="openTime" value="15:00" required></div><div><label>Close time</label><input type="time" name="closeTime" value="18:00" required></div><div style="display:flex;align-items:end"><button style="margin-bottom:12px;width:100%">Add Market</button></div></div></form></section>`;
- const whatsappPanel=`<section class="panel"><h2>PLAY MATKA — WhatsApp Link</h2><form method="post" action="/admin/settings/whatsapp"><label>Personal WhatsApp Link</label><input type="url" name="whatsappPlayLink" value="${esc(s.whatsappPlayLink || "")}" placeholder="https://wa.me/919876543210" required><p class="muted">Enter your personal WhatsApp link. The Play Matka button will open WhatsApp with a pre-filled message.</p><button>Save WhatsApp Link</button></form></section>`; const exportPanel=`<section class="panel admin-export"><h2>Download Results</h2><a href="/admin/export/results.csv">Download Excel Sheet (CSV)</a> | <a href="/admin/export/results.pdf" target="_blank">Download PDF</a></section>`; const cards=personalMarkets.map(m=>`<section class="panel admin-market-card"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Market name</label><input name="name" value="${esc(chartMarketName(m.name))}" required maxlength="60"></div><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Details</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}<form method="post" action="/admin/market/delete" onsubmit="return confirm('Delete this market and all its results?')" style="margin-top:14px"><input type="hidden" name="id" value="${esc(m.id)}"><button class="danger">Delete Market</button></form></section>`).join("");
- res.send(page("Admin Dashboard",`${flash(req)}<section class="panel admin-overview"><div class="admin-kicker">DPBOSS CONTROL CENTER</div><h2>Dashboard Overview</h2><div class="stats"><div class="stat"><span>Markets</span><strong>${personalMarkets.length}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div></div></section>${add}${whatsappPanel}${exportPanel}${cards}` ,true));
+app.get("/admin",adminOnly,async (req,res)=>{
+ const s=readStore(), total=s.markets.reduce((n,m)=>n+m.results.length,0), published=s.markets.reduce((n,m)=>n+m.results.filter(r=>resultIsVisible(r)).length,0), drafts=total-published;
+ const visitorStats = await getVisitorStats().catch(err => { console.error("Website analytics read failed:", err.message); return { totalVisits: 0, uniqueVisitors: 0 }; });
+ const manualMarkets=s.markets.filter(isManualMarket);
+ const cards=manualMarkets.map(m=>`<section class="panel"><h2>${esc(chartMarketName(m.name))}</h2><p class="muted">Manual market · Open ${esc(m.openTime)} · Close ${esc(m.closeTime)} · ${m.results.length} saved result(s)</p><form method="post" action="/admin/market/update"><input type="hidden" name="id" value="${esc(m.id)}"><div class="row"><div><label>Open time</label><input type="time" name="openTime" value="${esc(m.openTime)}" required></div><div><label>Close time</label><input type="time" name="closeTime" value="${esc(m.closeTime)}" required></div></div><button>Save Market Timing</button></form><hr style="border:0;border-top:1px solid #eee3cd;margin:18px 0"><h3>Result Management</h3><form method="post" action="/admin/result"><input type="hidden" name="marketId" value="${esc(m.id)}"><label>Result date</label><input type="date" name="date" value="${localDateISO()}" max="${localDateISO()}" required><div class="row"><div><label>Open Panna (any 3 digits)</label><input name="openPanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="119" oninput="updatePreview(this.form)"></div><div><label>Close Panna (any 3 digits)</label><input name="closePanna" inputmode="numeric" pattern="[0-9]{3}" maxlength="3" placeholder="169" oninput="updatePreview(this.form)"></div></div><div class="stat" style="margin:8px 0 14px"><span>Result preview</span><strong data-preview="open">Open Ank: —</strong><strong data-preview="jodi">Jodi: —</strong><strong data-preview="close">Close Ank: —</strong><p class="muted">Publish Open after its result is ready, then publish Close later for the same date.</p></div><button name="action" value="publish-open">Publish Open Only</button> <button name="action" value="publish-close">Publish Close Only</button> <button name="action" value="publish">Publish Both</button></form>${adminSavedResults(m)}</section>`).join("");
+ const apiCount=s.markets.filter(m=>!isManualMarket(m)).length;
+ res.send(page("Admin Dashboard",`${flash(req)}<section class="panel"><h2>Admin Dashboard</h2><div class="stats"><div class="stat"><span>API Markets (read-only)</span><strong>${apiCount}</strong></div><div class="stat"><span>Published results</span><strong>${published}</strong></div><div class="stat"><span>Draft / unpublished</span><strong>${drafts}</strong></div><div class="stat"><span>Total Visits</span><strong>${visitorStats.totalVisits.toLocaleString("en-IN")}</strong></div><div class="stat"><span>Unique Visitors</span><strong>${visitorStats.uniqueVisitors.toLocaleString("en-IN")}</strong></div></div><p class="muted">Visitor counts include public page views only. Unique visitors are counted by browser/device cookie. Only MAHADEV and MAHADEV NIGHT can be edited here. All other market results and timings are managed by SattaAPI.</p></section><section class="panel"><h2>Add New Market</h2><p class="muted">Add a market name so it can be matched with SattaAPI. Results and timings for API markets continue to be managed by SattaAPI.</p><form method="post" action="/admin/market/add"><label>Market name</label><input name="name" maxlength="60" placeholder="e.g. New Market" required><div class="row"><div><label>Initial open time</label><input type="time" name="openTime" value="15:00" required></div><div><label>Initial close time</label><input type="time" name="closeTime" value="18:00" required></div></div><button>Add Market</button></form></section>${cards || '<section class="panel">MAHADEV and MAHADEV NIGHT are not present in the saved market list yet. Sync or restore the correct market records first.</section>'}`,true));
 });
-
-app.get("/admin/export/results.csv",adminOnly,(req,res)=>{
- const s=readStore(),q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
- const rows=[["Market","Date","Open Panna","Open Ank","Jodi","Close Ank","Close Panna","Status"]];
- for(const m of s.markets||[])for(const r of m.results||[])rows.push([m.name,r.date,r.openPanna,r.openAnk,r.jodi,r.closeAnk,r.closePanna,resultIsVisible(r)?"Published":"Draft"]);
- res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","text/csv; charset=utf-8");res.setHeader("Content-Disposition",'attachment; filename="dpboss-results.csv"');res.send("\uFEFF"+rows.map(a=>a.map(q).join(",")).join("\r\n"));
+app.post("/admin/market/add",adminOnly,async (req,res)=>{
+  const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||""),slug=apiSlug(name);
+  if(!name||name.length>60||!slug||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a valid market name and opening/closing times.";return res.redirect("/admin");}
+  const s=await readStoreForUpdate();
+  if(s.markets.some(m=>apiSlug(m.name)===slug||m.apiSlug===slug)){req.session.flash="This market already exists.";return res.redirect("/admin");}
+  const m={id:"api-"+slug,apiSlug:slug,name,openTime,closeTime,results:[]};
+  s.markets.push(m);logAction(s,"API market added",`${name} (${openTime}-${closeTime})`);
+  await saveStoreWithFlash(req,s,"Market added. SattaAPI will manage its results and timings when a matching API record is available.","Market add");res.redirect("/admin");
 });
-app.get("/admin/export/results.pdf",adminOnly,(req,res)=>{
- const s=readStore(),h=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
- let rows="";
- for(const m of s.markets||[])for(const r of m.results||[])rows+="<tr>"+[m.name,r.date,r.openPanna,r.openAnk,r.jodi,r.closeAnk,r.closePanna,resultIsVisible(r)?"Published":"Draft"].map(v=>"<td>"+h(v)+"</td>").join("")+"</tr>";
- res.setHeader("Cache-Control","no-store");res.setHeader("Content-Type","text/html; charset=utf-8");
- res.send('<!doctype html><html><head><meta charset="utf-8"><title>DPBOSS Results</title><style>body{font-family:Arial;padding:20px}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border:1px solid #aaa;padding:6px;text-align:center}th{background:#eee}@media print{button{display:none}}</style></head><body><h2>DPBOSS Results</h2><button onclick="print()">Print / Save as PDF</button><table><thead><tr><th>Market</th><th>Date</th><th>Open Panna</th><th>Open Ank</th><th>Jodi</th><th>Close Ank</th><th>Close Panna</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table><script>onload=()=>print()</script></body></html>');
+/* Manual market creation is intentionally disabled.
+app.post("/admin/market/add",adminOnly,async (req,res)=>{
+  const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");
+  if(!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a market name and valid times.";return res.redirect("/admin");}
+  const s=await readStoreForUpdate(),m={id:"market-"+s.nextId++,name,openTime,closeTime,results:[]};
+  s.markets.push(m);logAction(s,"Market added",name);
+  await saveStoreWithFlash(req,s,"Market added.","Market add");res.redirect("/admin");
 });
-
-app.post("/admin/market/add",adminOnly,async (req,res)=>{const name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Enter a market name and valid times.";return res.redirect("/admin");}const s=readStore(),m={id:"market-"+s.nextId++,name,openTime,closeTime,results:[]};s.markets.push(m);logAction(s,"Market added",name);req.session.flash=await writeStore(s)?"Market added.":"SAVE FAILED: data was not saved. Check server logs.";res.redirect("/admin");});
-app.post("/admin/market/update",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id),name=String(req.body.name||"").trim(),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");if(!m||!name||name.length>60||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Could not update market; check the values.";return res.redirect("/admin");}const before=m.name;m.name=name;m.openTime=openTime;m.closeTime=closeTime;logAction(s,"Market updated",`${before} → ${name} (${openTime}-${closeTime})`);req.session.flash=await writeStore(s)?"Market details updated.":"SAVE FAILED: data was not saved. Check server logs.";res.redirect("/admin");});
-app.post("/admin/market/delete",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.id);if(m){s.markets=s.markets.filter(x=>x.id!==req.body.id);logAction(s,"Market deleted",m.name);const saved=await writeStore(s);req.session.flash=saved?"Market deleted.":"SAVE FAILED: deletion was not confirmed."; }else{req.session.flash="Market not found.";}res.redirect("/admin");});
+*/
+app.post("/admin/market/update",adminOnly,async (req,res)=>{
+  const s=await readStoreForUpdate(),m=s.markets.find(x=>x.id===req.body.id),openTime=String(req.body.openTime||""),closeTime=String(req.body.closeTime||"");
+  if(!m||!isManualMarket(m)||!validTime(openTime)||!validTime(closeTime)){req.session.flash="Only MAHADEV and MAHADEV NIGHT timings can be edited here.";return res.redirect("/admin");}
+  m.openTime=openTime;m.closeTime=closeTime;logAction(s,"Manual market timing updated",`${m.name} (${openTime}-${closeTime})`);
+  await saveStoreWithFlash(req,s,"Market details updated.","Market update");res.redirect("/admin");
+});
+app.post("/admin/market/delete",adminOnly,(req,res)=>{ req.session.flash="Market deletion is disabled to protect API-managed markets."; res.redirect("/admin"); });
 app.post("/admin/result",adminOnly,async (req,res)=>{
-  const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),date=String(req.body.date||""),action=String(req.body.action||"");
+  const s=await readStoreForUpdate(),m=s.markets.find(x=>x.id===req.body.marketId),date=String(req.body.date||""),action=String(req.body.action||"");
   const old=m&&m.results.find(r=>r.date===date);
-  if(!m||!validDate(date)){req.session.flash="Choose a valid market and date.";return res.redirect("/admin");}
+  if(!m||!isManualMarket(m)||!validDate(date)){req.session.flash="Only MAHADEV and MAHADEV NIGHT results can be edited manually.";return res.redirect("/admin");}
   if(date>localDateISO()){req.session.flash="Future-dated results are not allowed. Choose today or an earlier date.";return res.redirect("/admin");}
   if(action==="publish-open"||action==="publish-close"){
     const field=action==="publish-open"?"openPanna":"closePanna",value=String(req.body[field]||"");
@@ -820,7 +820,8 @@ app.post("/admin/result",adminOnly,async (req,res)=>{
     entry.updatedAt=new Date().toISOString();
     if(old){m.results[m.results.findIndex(r=>r.date===date)]=entry;}else{m.results.push(entry);}
     logAction(s,old?"Result updated":"Result added",`${m.name} · ${date} · ${action==="publish-open"?"Open":"Close"} published`);
-    const saved=await writeStore(s);req.session.flash=saved?(action==="publish-open"?"Open result published. You can publish Close later for the same date.":"Close result published."):"SAVE FAILED: result was not saved. Check server logs.";return res.redirect("/admin");
+    const message=action==="publish-open"?"Open result published. You can publish Close later for the same date.":"Close result published.";
+    await saveStoreWithFlash(req,s,message,"Result update");return res.redirect("/admin");
   }
   if(action==="publish"||action==="draft"){
     const openPanna=String(req.body.openPanna||old?.openPanna||""),closePanna=String(req.body.closePanna||old?.closePanna||"");
@@ -829,15 +830,32 @@ app.post("/admin/result",adminOnly,async (req,res)=>{
     const entry={date,openPanna,openAnk,jodi:openAnk+closeAnk,closePanna,closeAnk,published,openPublished:published,closePublished:published,updatedAt:new Date().toISOString()};
     const idx=m.results.findIndex(r=>r.date===date);if(idx>=0)m.results[idx]=entry;else m.results.push(entry);
     logAction(s,old?"Result updated":"Result added",`${m.name} · ${date} · ${openPanna}/${entry.jodi}/${closePanna} · ${published?"both published":"draft"}`);
-    const saved=await writeStore(s);req.session.flash=saved?(published?"Open and Close results published.":"Draft saved."):"SAVE FAILED: result was not saved. Check server logs.";return res.redirect("/admin");
+    await saveStoreWithFlash(req,s,published?"Open and Close results published.":"Draft saved.","Result update");return res.redirect("/admin");
   }
   req.session.flash="Choose a valid publish action.";res.redirect("/admin");
 });
-app.post("/admin/result/delete",adminOnly,async (req,res)=>{const s=readStore(),marketId=String(req.body.marketId||""),date=String(req.body.date||""),m=s.markets.find(x=>String(x.id)===marketId),idx=m&&m.results.findIndex(x=>x.date===date);if(!m||!validDate(date)||idx<0){req.session.flash="Result not found.";return res.redirect("/admin");}try{if(mongoDb){await mongoWriteQueue;await mongoDb.collection("daily_results").deleteOne({marketId:String(m.id),date});}m.results.splice(idx,1);logAction(s,"Result deleted",m.name+" · "+date);const saved=await writeStore(s);req.session.flash=saved?"Result deleted from the selected market and date.":"SAVE FAILED: result deletion was not confirmed. Check server logs.";}catch(err){console.error("Result deletion failed:",err.message);req.session.flash="DELETE FAILED: result was not removed. Check server logs.";}res.redirect("/admin");});
-app.post("/admin/result/toggle",adminOnly,async (req,res)=>{const s=readStore(),m=s.markets.find(x=>x.id===req.body.marketId),r=m&&m.results.find(x=>x.date===req.body.date);if(r){r.published=!r.published;r.openPublished=r.published;r.closePublished=r.published;r.updatedAt=new Date().toISOString();logAction(s,r.published?"Result published":"Result unpublished",`${m.name} · ${r.date}`);const saved=await writeStore(s);req.session.flash=saved?(r.published?"Result published.":"Result unpublished."):"SAVE FAILED: change was not saved.";}res.redirect("/admin");});
+app.post("/admin/result/toggle",adminOnly,async (req,res)=>{
+  const s=await readStoreForUpdate(),m=s.markets.find(x=>x.id===String(req.body.marketId||"")),r=m&&m.results.find(x=>x.date===String(req.body.date||""));
+  if(!m||!isManualMarket(m)||!r){req.session.flash="Only MAHADEV and MAHADEV NIGHT results can be managed manually.";return res.redirect("/admin");}
+  const shouldPublish=!resultIsVisible(r);
+  r.openPublished=shouldPublish&&validPanna(String(r.openPanna||""));
+  r.closePublished=shouldPublish&&validPanna(String(r.closePanna||""));
+  r.published=r.openPublished&&r.closePublished;
+  r.updatedAt=new Date().toISOString();
+  logAction(s,shouldPublish?"Result published":"Result unpublished",`${m.name} · ${r.date}`);
+  await saveStoreWithFlash(req,s,shouldPublish?"Available result values published.":"Result unpublished.","Result publication update");res.redirect("/admin");
+});
+app.post("/admin/result/delete",adminOnly,async (req,res)=>{
+  const s=await readStoreForUpdate(),marketId=String(req.body.marketId||""),date=String(req.body.date||""),m=s.markets.find(x=>String(x.id)===marketId);
+  if(!m||!isManualMarket(m)||!validDate(date)){req.session.flash="Only MAHADEV and MAHADEV NIGHT results can be deleted manually.";return res.redirect("/admin");}
+  const idx=m.results.findIndex(x=>x.date===date);
+  if(idx<0){req.session.flash="Result not found.";return res.redirect("/admin");}
+  m.results.splice(idx,1);logAction(s,"Result deleted",`${m.name} · ${date}`);
+  await saveStoreWithFlash(req,s,"Result deleted from the selected market and date.","Result deletion");res.redirect("/admin");
+});
 
 // SattaAPI integration. Credentials are read only from server environment variables.
-const SATTA_API_URL = process.env.SATTA_API_URL || "https://matkaapi.sattaapi.com/wp-json/satta/v1/results";
+const SATTA_API_URL = process.env.SATTA_API_URL || "https://sattaapi.com/wp-json/satta/v1/results";
 const SATTA_REFRESH_SETTING = Number(process.env.SATTA_API_REFRESH_MS || 300000);
 const SATTA_API_REFRESH_MS = Number.isFinite(SATTA_REFRESH_SETTING) ? Math.max(60000, SATTA_REFRESH_SETTING) : 300000;
 function apiSlug(name) { return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, ""); }
@@ -893,6 +911,8 @@ function syncSattaRows(store, rows) {
   for (const row of rows) {
     const name = String(row.name || "").trim(), slug = apiSlug(name);
     if (!name || !slug) { skipped++; continue; }
+    // MAHADEV and MAHADEV NIGHT are manual-only; API must never overwrite their results or timings.
+    if (slug === "mahadev" || slug === "mahadevnight") { skipped++; continue; }
     let market = store.markets.find(m => m.apiSlug === slug || apiSlug(m.name) === slug);
     if (!market) {
       market = { id: `api-${slug}`, apiSlug: slug, name,
@@ -900,8 +920,19 @@ function syncSattaRows(store, rows) {
         closeTime: toSattaMinutes(row.close_time) || "18:00", results: [] };
       store.markets.push(market); addedMarkets++;
     } else {
-      // Preserve existing admin-configured market name and timings.
+      // API owns market timings for every market except the manually managed Mahadev market.
       market.apiSlug = slug;
+    }
+    const isManualMahadev = apiSlug(market.name) === "mahadev" || slug === "mahadev";
+    const isFixedKalyan = slug === "kalyan" || apiSlug(market.name) === "kalyan";
+    if (isFixedKalyan) {
+      market.openTime = "15:45";
+      market.closeTime = "17:45";
+    } else if (!isManualMahadev) {
+      const apiOpenTime = toSattaMinutes(row.open_time);
+      const apiCloseTime = toSattaMinutes(row.close_time);
+      if (apiOpenTime) market.openTime = apiOpenTime;
+      if (apiCloseTime) market.closeTime = apiCloseTime;
     }
     const entry = parseSattaResult(row);
     if (!entry) { skipped++; continue; }
@@ -922,15 +953,15 @@ function syncSattaRows(store, rows) {
 }
 app.get("/admin/api", adminOnly, (req,res) => {
   const configured = Boolean(process.env.SATTA_API_KEY && process.env.SATTA_DOMAIN_KEY && process.env.SATTA_API_DOMAIN);
-  res.send(page("SattaAPI Integration", `${flash(req)}<section class="panel"><h2>Live Result API Integration</h2><p>${configured ? "SattaAPI credentials are configured on the server." : "SattaAPI credentials are not configured yet."}</p><p class="muted">Fetches the provider market list and results securely. Existing manual admin editing remains available. API credentials are never shown here.</p><form method="post" action="/admin/api/sync"><button>Fetch / Update Results Now</button></form></section>`, true));
+  res.send(page("SattaAPI Integration", `${flash(req)}<section class="panel"><h2>Live Result API Integration</h2><p>${configured ? "SattaAPI credentials are configured on the server." : "SattaAPI credentials are not configured yet."}</p><p class="muted">All non-Mahadev markets are read-only and managed by SattaAPI. Only MAHADEV and MAHADEV NIGHT are manually editable. API credentials are never shown here.</p><form method="post" action="/admin/api/sync"><button>Fetch / Update Results Now</button></form></section>`, true));
 });
 app.post("/admin/api/sync", adminOnly, async (req,res) => {
   try {
     const body=await sattaApiRequest();
-    const store=readStore();
+    const store=await readStoreForUpdate();
     const counts=syncSattaRows(store,body.results.data);
     logAction(store,"SattaAPI sync",`${counts.saved} result(s) saved; ${counts.addedMarkets} market(s) added; ${counts.skipped} row(s) skipped`);
-    writeStore(store);
+    await writeStore(store);
     req.session.flash=`SattaAPI sync complete: ${counts.saved} result(s) saved, ${counts.addedMarkets} market(s) added, ${counts.skipped} row(s) skipped. Subscription expiry: ${body.expiry||"not provided"}.`;
     res.redirect("/admin/api");
   } catch(e) {
@@ -939,17 +970,17 @@ app.post("/admin/api/sync", adminOnly, async (req,res) => {
   }
 });
 
-// Automatic read-only result refresh every 60 seconds.
+// Automatic read-only result refresh at the configured interval (default 5 minutes; minimum 1 minute).
 let apiAutoSyncRunning = false;
 async function autoSyncMarketApi() {
   if (apiAutoSyncRunning || !process.env.SATTA_API_KEY || !process.env.SATTA_DOMAIN_KEY || !process.env.SATTA_API_DOMAIN) return;
   apiAutoSyncRunning = true;
   try {
     const body=await sattaApiRequest();
-    const store=readStore();
+    const store=await readStoreForUpdate();
     const counts=syncSattaRows(store,body.results.data);
     logAction(store,"Automatic SattaAPI refresh",`${counts.saved} result(s) refreshed`);
-    writeStore(store);
+    await writeStore(store);
     console.log(`SattaAPI automatic refresh: ${counts.saved} result(s), ${counts.addedMarkets} market(s) added`);
   } catch(e) {
     console.error(`SattaAPI automatic refresh failed: ${e.message}`);
@@ -961,7 +992,38 @@ async function autoSyncMarketApi() {
 app.get("/admin/logs",adminOnly,(req,res)=>{const s=readStore();const rows=s.logs.slice(0,200);res.send(page("Change Log",`<section class="panel"><h2>Recent Admin Changes</h2><p class="muted">Latest 200 actions; log is stored locally with the result data.</p>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${esc(x.at.replace("T"," ").slice(0,19))}</td><td>${esc(x.action)}</td><td>${esc(x.detail)}</td></tr>`).join("")}</tbody></table></div>`:'<p>No changes logged yet.</p>'}</section>`,true));});
 app.get("/admin/backup",adminOnly,(req,res)=>{res.send(page("Backup & Restore",`${flash(req)}<section class="panel"><h2>Backup & Restore</h2><p>Download a copy of your markets, results and change log. Keep the file private.</p><a class="btn" href="/admin/backup/download">Download JSON Backup</a><hr style="border:0;border-top:1px solid #eee3cd;margin:20px 0"><h3>Restore from backup</h3><p class="muted">Restore replaces current local data. Download a backup first. Only restore a JSON backup created by this app.</p><form method="post" action="/admin/backup/restore" enctype="multipart/form-data"><label>Select backup JSON file (max 2 MB)</label><input type="file" name="backup" accept=".json,application/json" required><button class="danger">Restore Backup</button></form></section>`,true));});
 app.get("/admin/backup/download",adminOnly,(req,res)=>{res.setHeader("Content-Type","application/json");res.setHeader("Content-Disposition",`attachment; filename="dpboss-backup-${new Date().toISOString().slice(0,10)}.json"`);res.send(JSON.stringify(readStore(),null,2));});
-app.post("/admin/backup/restore",adminOnly,upload.single("backup"),async (req,res)=>{try{if(!req.file)throw Error("Choose a backup file.");const s=JSON.parse(req.file.buffer.toString("utf8"));if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");for(const m of s.markets){if(!m.id||!m.name||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");for(const r of m.results){if(!validDate(r.date)||!validPanna(r.openPanna)||!validPanna(r.closePanna)||typeof r.published!=="boolean")throw Error("Backup result data is invalid.");}}logAction(s,"Backup restored","Data restored from uploaded JSON backup");if(!await writeStore(s))throw Error("Database save failed; restore was not confirmed.");req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");}catch(e){req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}});
+app.post("/admin/backup/restore",adminOnly,upload.single("backup"),async (req,res)=>{
+  try{
+    if(!req.file)throw Error("Choose a backup file.");
+    const s=JSON.parse(req.file.buffer.toString("utf8"));
+    if(!s||!Array.isArray(s.markets)||!Number.isInteger(s.nextId)||!Array.isArray(s.logs))throw Error("File is not a valid DPBOSS backup.");
+    const marketIds=new Set();
+    for(const m of s.markets){
+      if(!m||typeof m.id!=="string"||!m.id||typeof m.name!=="string"||!m.name.trim()||!validTime(m.openTime)||!validTime(m.closeTime)||!Array.isArray(m.results))throw Error("Backup market data is invalid.");
+      if(marketIds.has(m.id))throw Error("Backup contains duplicate market IDs.");
+      marketIds.add(m.id);
+      const dates=new Set();
+      for(const r of m.results){
+        if(!r||!validDate(r.date))throw Error("Backup result date is invalid.");
+        if(dates.has(r.date))throw Error("Backup contains duplicate result dates for a market.");
+        dates.add(r.date);
+        const legacyPublished=r.published===true;
+        const openPublished=r.openPublished===true||legacyPublished;
+        const closePublished=r.closePublished===true||legacyPublished;
+        if((r.openPanna&&!validPanna(String(r.openPanna)))||(r.closePanna&&!validPanna(String(r.closePanna))))throw Error("Backup panna data is invalid.");
+        if(openPublished&&!validPanna(String(r.openPanna||"")))throw Error("A published Open result is missing a valid three-digit Panna.");
+        if(closePublished&&!validPanna(String(r.closePanna||"")))throw Error("A published Close result is missing a valid three-digit Panna.");
+        r.openPublished=openPublished;r.closePublished=closePublished;r.published=openPublished&&closePublished;
+        if(openPublished)r.openAnk=pannaAnk(String(r.openPanna));
+        if(closePublished)r.closeAnk=pannaAnk(String(r.closePanna));
+        if(r.published)r.jodi=String(r.openAnk)+String(r.closeAnk);
+      }
+    }
+    logAction(s,"Backup restored","Data restored from uploaded JSON backup");
+    await writeStore(s);
+    req.session.flash="Backup restored successfully.";res.redirect("/admin/backup");
+  }catch(e){console.error("Backup restore failed:",e.message);req.session.flash="Restore failed: "+e.message;res.redirect("/admin/backup");}
+});
 app.use((err,req,res,next)=>{if(err instanceof multer.MulterError){req.session.flash="Upload failed: file must be under 2 MB.";return res.redirect("/admin/backup");}console.error(err);res.status(500).send("Server error. Check the Termux terminal.");});
 initializeDatabase().then(() => {
   app.listen(PORT,"0.0.0.0",()=>{ console.log(`DPBOSS listening on port ${PORT}`); if (process.env.SATTA_API_KEY && process.env.SATTA_DOMAIN_KEY && process.env.SATTA_API_DOMAIN) { autoSyncMarketApi(); setInterval(autoSyncMarketApi, SATTA_API_REFRESH_MS); } });

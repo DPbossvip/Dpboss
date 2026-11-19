@@ -556,6 +556,31 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.urlencoded({ extended: false, limit: "3mb" }));
 app.use(session({ name:"dpboss.sid", secret:process.env.SESSION_SECRET, resave:false, saveUninitialized:false,
   cookie:{ httpOnly:true, sameSite:"strict", secure: process.env.NODE_ENV === "production", maxAge:2*60*60*1000 } }));
+const ADMIN_SECRET_PATH = "/control/jack";
+app.use((req,res,next)=>{
+  const path=req.path;
+  const loginPath=ADMIN_SECRET_PATH+"/login";
+  if(path==="/admin"||path.startsWith("/admin/")||path==="/login") return res.status(404).send("Not Found");
+  if(path===loginPath) req.url="/login"+req.url.slice(loginPath.length);
+  else if(path===ADMIN_SECRET_PATH||path.startsWith(ADMIN_SECRET_PATH+"/")) req.url="/admin"+req.url.slice(ADMIN_SECRET_PATH.length);
+  else return next();
+  const send=res.send.bind(res);
+  res.send=function(body){
+    if(typeof body==="string") body=body.replaceAll("/admin",ADMIN_SECRET_PATH).replaceAll("/login",loginPath);
+    return send(body);
+  };
+  const redirect=res.redirect.bind(res);
+  res.redirect=function(...args){
+    const i=args.length===1?0:1, url=args[i];
+    if(typeof url==="string"){
+      if(url==="/login") args[i]=loginPath;
+      else if(url==="/admin"||url.startsWith("/admin/")) args[i]=ADMIN_SECRET_PATH+url.slice(6);
+    }
+    return redirect(...args);
+  };
+  next();
+});
+
 
 app.get("/", (req,res) => {
   const s = readStore();
